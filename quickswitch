@@ -248,7 +248,7 @@ switch_providers() {
   echo "\nThe overlay will be copied to $STEPDIR..."
 
   if [ "$KSU" ] || [ "$APATCH" ]; then
-    APKPATH=$(pm path $1 | sed "s|package:||")
+    APKPATH=$(pm path $1 | sed "s|package:||" | sed -n '/base\.apk/p' )
   fi
 
   # Create needed dirs
