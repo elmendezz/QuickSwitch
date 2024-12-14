@@ -1,1 +1,1 @@
-zip -r QuickSwitch-Updater.zip . -x ".git*" "*.zip" "release.sh" ".gitignore" "QuickSwitch.json" "restartbuild.sh" "CHANGELOG.md"
+zip -r QuickSwitch-Updater.zip $(cat files.txt)

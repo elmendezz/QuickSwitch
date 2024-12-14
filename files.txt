@@ -1,0 +1,14 @@
+common*
+META-INF*
+overlays*
+system*
+customize.sh
+module.prop
+quickswitch
+QuickSwitch.apk
+sepolicy.rule
+service.sh
+system.prop
+uninstall.sh
+zipsigner
+zipsigner-3.0-dexed.jar
