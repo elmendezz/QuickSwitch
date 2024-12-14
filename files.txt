@@ -3,7 +3,6 @@ META-INF*
 overlays*
 system*
 customize.sh
-module.prop
 quickswitch
 QuickSwitch.apk
 sepolicy.rule

@@ -11,16 +11,13 @@ MODDIR=${0%/*}
 
 KSU=true # removed during install if false
 APATCH=true # removed during install if false
-AP_BIND_MOUNT=true # removed during install if false
+MAGIC_MOUNT=true # removed during install if false
 
-if [ "$KSU" ]; then
-  BBDIR="/data/adb/ksu/bin/busybox"
-elif [ "$APATCH" ]; then
-  BBDIR="/data/adb/ap/bin/busybox"
+if [ "$APATCH" ]; then
   APATCH_VER=$(cat /data/adb/ap/version)
-else
-  BBDIR="/data/adb/magisk/busybox"
 fi
+
+BBDIR="$MODDIR/busybox"
 
 cd $MODDIR
 
@@ -143,7 +140,7 @@ get_logs() {
 }
 
 setvars() {
-  if [ -n "$KSU" ] || { [ -n "$APATCH" ] && [ -z "$AP_BIND_MOUNT" ]; }; then
+  if [ -z "$MAGIC_MOUNT" ]; then
     STEPDIRPREFIX=$MODDIR
   else
     STEPDIRPREFIX=$MODDIR/system

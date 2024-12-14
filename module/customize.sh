@@ -53,13 +53,12 @@ if [ -z "$APATCH" ]; then
   sed -i "/APATCH=true*/d" $MODPATH/quickswitch
 fi
 
-if [ -z "$APATCH_BIND_MOUNT" ]; then
-  sed -i "/AP_BIND_MOUNT=true*/d" $MODPATH/quickswitch
-fi
-
 if [ -n "$KSU" ] || [ -n "$APATCH" ]; then
   NOAPK=true
   ln -s $(which busybox) $MODPATH/busybox
+  if ( [ -n "$KSU" ] && [ -e "/data/adb/ksu/modules.img" ] ) || ( [ -n "$APATCH" ] && [ -z "$APATCH_BIND_MOUNT" ] ) ; then
+    sed -i "/MAGIC_MOUNT=true*/d" $MODPATH/quickswitch
+  fi
 else
   ln -s /data/adb/magisk/busybox $MODPATH/busybox
 fi

@@ -1,0 +1,7 @@
+id=quickswitch
+name=QuickSwitch Fork(WebUI)
+version=v4.0.4f-webui
+versionCode=4040
+author=The Lawnchair team
+description=[ Quickstep : Default ] Quickstep enabler for supported launchers
+updateJson=https://raw.githubusercontent.com/j7b3y/QuickSwitch/refs/heads/anyfix/master/wiwebui/update.json

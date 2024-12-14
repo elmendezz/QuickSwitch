@@ -1,0 +1,6 @@
+{
+    "version": "v4.0.4f-webui",
+    "versionCode": 4040,
+    "zipUrl": "https://github.com/j7b3y/QuickSwitch/releases/latest/download/QuickSwitch-fork-webui.zip",
+    "changelog": "https://raw.githubusercontent.com/j7b3y/QuickSwitch/refs/heads/anyfix/master/webui/CHANGELOG.md"
+}
