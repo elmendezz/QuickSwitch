@@ -7,4 +7,4 @@ QuickSwitch is a Magisk module which systemlessly allows supported launchers to 
 ### 4.0.4  
 
 - Add WebUI  
-- Compatible with Magic Mount  
+- Compatible with Magic Mount(Apatch,KernelSU Next)  

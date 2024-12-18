@@ -6,7 +6,7 @@ QuickSwitch is a Magisk module which systemlessly allows supported launchers to 
 
 ### 4.0.4  
 
-- Compatible with Magic Mount  
+- Compatible with Magic Mount(Apatch,KernelSU Next)  
 
 ### 4.0.3
 
