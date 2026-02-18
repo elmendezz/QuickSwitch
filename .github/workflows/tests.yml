@@ -1,39 +1,142 @@
-name: Upload to Gofile Example
+name: Manual Test Build & GoFile
+
 on:
-  workflow_dispatch: # Se activa manualmente
+  workflow_dispatch: # Solo manual
 
 jobs:
-  gofile-upload:
+  test-build-release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Necesario para crear la release
+
     steps:
-      - name: Create Dummy File
-        run: |
-          # Creamos el archivo que no existe en el repo
-          echo "hola gofile" > hola.txt
-
-      - name: Upload to GitHub Artifacts
-        uses: actions/upload-artifact@v4
+      # --- 1. PREPARACIÓN ---
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
         with:
-          name: my-artifact
-          path: hola.txt
+          fetch-depth: 0 # Necesario para leer los diffs
 
-      - name: Upload to Gofile
+      - name: 📝 Generate Diff Log
+        id: diff_log
+        run: |
+          echo "## 🔍 File Changes (Diffs)" > release_notes.md
+          echo "Diferencias respecto al commit anterior:" >> release_notes.md
+          echo '```diff' >> release_notes.md
+          # Obtenemos los cambios del último commit (HEAD^ a HEAD)
+          # Limitamos a 200 líneas para no romper la UI de GitHub
+          git diff HEAD^ HEAD | head -n 200 >> release_notes.md
+          echo '```' >> release_notes.md
+          
+          # Si el diff es muy largo, avisamos
+          COUNT=$(git diff HEAD^ HEAD | wc -l)
+          if [ "$COUNT" -gt 200 ]; then
+            echo "... (truncated, total lines: $COUNT)" >> release_notes.md
+          fi
+
+      # --- 2. SETUP JAVA & ANDROID ---
+      - name: ☕ Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: ⚙️ Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      # --- 3. BUILD TEST VERSION (Forzada a 0) ---
+      - name: 🔨 Build Test APK
+        run: |
+          # Forzamos versión 0 y nombre "Test Version"
+          VER_CODE="0"
+          VER_NAME="Test Version"
+          
+          cd QuickSwitch-App
+          
+          find . -name "build.gradle.kts" -exec sed -i "s/versionCode\s*=\s*[0-9]\+/versionCode = $VER_CODE/" {} +
+          find . -name "build.gradle.kts" -exec sed -i "s/versionName\s*=\s*\".*\"/versionName = \"$VER_NAME\"/" {} +
+          chmod +x gradlew
+          
+          ./gradlew assembleRelease --no-daemon --parallel --build-cache -x lint -x test
+
+      # --- 4. FIRMA MANUAL ---
+      - name: 🔐 Sign APK Manually
+        id: sign_app
+        run: |
+          echo "${{ secrets.SIGNING_KEY }}" | base64 -d > release.jks
+          
+          BUILD_TOOLS_VER=$(ls $ANDROID_SDK_ROOT/build-tools/ | sort -r | head -n 1)
+          TOOLS_PATH="$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS_VER"
+          
+          INPUT_APK="QuickSwitch-App/app/build/outputs/apk/release/app-release-unsigned.apk"
+          [ ! -f "$INPUT_APK" ] && INPUT_APK="QuickSwitch-App/app/build/outputs/apk/release/app-release.apk"
+          ALIGNED_APK="app-release-aligned.apk"
+          SIGNED_APK="QuickSwitch-Test.apk"
+
+          "$TOOLS_PATH/zipalign" -v -p 4 "$INPUT_APK" "$ALIGNED_APK"
+          "$TOOLS_PATH/apksigner" sign --ks release.jks --ks-key-alias "${{ secrets.ALIAS }}" --ks-pass "pass:${{ secrets.KEY_STORE_PASSWORD }}" --key-pass "pass:${{ secrets.KEY_PASSWORD }}" --v4-signing-enabled false --out "$SIGNED_APK" "$ALIGNED_APK"
+
+          rm -f "$ALIGNED_APK" "$INPUT_APK"
+          echo "signed_apk_path=$SIGNED_APK" >> $GITHUB_OUTPUT
+
+      # --- 5. EMPAQUETADO ZIP ---
+      - name: 📦 Create Flashable Zip
+        run: |
+          SIGNED_APK="${{ steps.sign_app.outputs.signed_apk_path }}"
+          
+          # Copiar APK firmado como QuickSwitch.apk para el módulo
+          cp "$SIGNED_APK" ./QuickSwitch.apk
+          
+          # Crear ZIP ignorando basura
+          zip -r "QuickSwitch-Test-v0.zip" . \
+            -x "*.git*" ".github/*" "*.md" "*.yml" "update.json" "current.txt" "QuickSwitch-App/*" \
+            -x "QuickSwitch-Test.apk" "release_notes.md" "*.jks"
+
+      # --- 6. SUBIDA A GOFILE (APK & ZIP) ---
+      - name: ☁️ Upload to GoFile
         id: gofile
         run: |
-          # 1. Obtenemos un servidor disponible de Gofile
+          echo "## ☁️ GoFile Links" >> release_notes.md
+          
+          # 1. Obtener Servidor
           SERVER=$(curl -s https://api.gofile.io/servers | jq -r '.data.servers[0].name')
           
-          # 2. Subimos el archivo a ese servidor
-          # Usamos @hola.txt para decirle a curl que suba el archivo físico
-          RESPONSE=$(curl -F "file=@hola.txt" "https://${SERVER}.gofile.io/contents/uploadfile")
-          
-          # 3. Extraemos el link de descarga (Download Page)
-          DOWNLOAD_LINK=$(echo $RESPONSE | jq -r '.data.downloadPage')
-          
-          echo "Tu archivo está en: $DOWNLOAD_LINK"
-          echo "link=$DOWNLOAD_LINK" >> $GITHUB_OUTPUT
+          # Función para subir
+          upload_file() {
+            local file=$1
+            local resp=$(curl -F "file=@$file" "https://${SERVER}.gofile.io/contents/uploadfile")
+            echo $resp | jq -r '.data.downloadPage'
+          }
 
-      - name: Show Result
+          # Subir APK
+          echo "Subiendo APK..."
+          LINK_APK=$(upload_file "QuickSwitch-Test.apk")
+          echo "- **APK:** $LINK_APK" >> release_notes.md
+          echo "apk_link=$LINK_APK" >> $GITHUB_OUTPUT
+
+          # Subir ZIP
+          echo "Subiendo ZIP..."
+          LINK_ZIP=$(upload_file "QuickSwitch-Test-v0.zip")
+          echo "- **ZIP:** $LINK_ZIP" >> release_notes.md
+          echo "zip_link=$LINK_ZIP" >> $GITHUB_OUTPUT
+
+      # --- 7. PUBLICAR RELEASE ALPHA (GITHUB) ---
+      - name: 🚀 Publish Alpha Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: "test-build-${{ github.run_number }}" # Tag único por ejecución
+          name: "Test Build #${{ github.run_number }} (v0)"
+          body_path: release_notes.md
+          prerelease: true  # Esto marca la release como "Pre-release" (Alpha)
+          files: |
+            QuickSwitch-Test-v0.zip
+            QuickSwitch-Test.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # --- 8. RESUMEN FINAL ---
+      - name: 🏁 Final Summary
         run: |
-          echo "La subida fue exitosa."
-          echo "Enlace público: ${{ steps.gofile.outputs.link }}"
+          echo "✅ Proceso Finalizado"
+          echo "🔗 GoFile APK: ${{ steps.gofile.outputs.apk_link }}"
+          echo "🔗 GoFile ZIP: ${{ steps.gofile.outputs.zip_link }}"
