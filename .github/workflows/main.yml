@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version_input:
-        description: 'Número de Versión (3 dígitos). Ej: 190 = 19.0, 192 = 19.2'
+        description: 'Versión (ej: 190 = 19.0, 195 = 19.5)'
         required: true
         default: '190'
 
@@ -23,61 +23,38 @@ jobs:
         with:
           fetch-depth: 0
 
-      # --- 0. DETECTOR DE CAMBIOS (Solo en Push) ---
-      - name: 🕵️ Check for relevant changes
-        id: check_changes
-        run: |
-          # Si es manual (dispatch), SIEMPRE corre
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "should_run=true" >> $GITHUB_OUTPUT
-            echo "is_manual=true" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          
-          # Lógica para push automático
-          IGNORE_PATTERN="README.md|changelog.md|update.json|module.prop|current.txt|.github/.*|.*\.yml"
-          CHANGED_FILES=$(git diff --name-only HEAD^ HEAD)
-          NON_IGNORED=$(echo "$CHANGED_FILES" | grep -vE "$IGNORE_PATTERN" || true)
-
-          if [ -z "$NON_IGNORED" ]; then
-            echo "should_run=false" >> $GITHUB_OUTPUT
-          else
-            echo "should_run=true" >> $GITHUB_OUTPUT
-            echo "is_manual=false" >> $GITHUB_OUTPUT
-          fi
-
-      # --- 1. CÁLCULO DE VERSIÓN (MANUAL 3 DÍGITOS) ---
+      # --- 1. CÁLCULO DE VERSIÓN (Lógica 3 dígitos) ---
       - name: 🧮 Calculate Version
-        if: steps.check_changes.outputs.should_run == 'true'
         id: versioning
         run: |
+          # 1. Determinar el código base (Input manual o leer archivo)
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            INPUT_CODE="${{ inputs.version_input }}"
+            RAW_CODE="${{ inputs.version_input }}"
           else
-            # Fallback para push automático: lee module.prop e incrementa
-            CURRENT=$(grep 'versionCode=' module.prop | cut -d= -f2)
-            INPUT_CODE=$((CURRENT + 1))
+            # Si es push, lee current.txt e incrementa 1 (ej 190 -> 191)
+            [ -f current.txt ] && OLD=$(cat current.txt) || OLD=100
+            RAW_CODE=$((OLD + 1))
           fi
-          
-          # Lógica: 190 -> 19.0 / 192 -> 19.2
-          # Extraemos todo menos el último dígito para el Mayor
-          MAJOR="${INPUT_CODE:0:${#INPUT_CODE}-1}"
-          # Extraemos el último dígito para el Menor
-          MINOR="${INPUT_CODE: -1}"
-          
-          # Si el input es muy corto (ej. 5), manejamos error o default
-          if [ -z "$MAJOR" ]; then MAJOR="1"; MINOR="0"; fi
 
-          NEW_VER="v${MAJOR}.${MINOR}"
-          NEW_CODE="$INPUT_CODE"
+          # 2. Lógica matemática: 190 -> 19.0
+          # Todo menos el último dígito es la versión Mayor
+          MAJOR="${RAW_CODE:0:${#RAW_CODE}-1}"
+          # El último dígito es la versión Menor
+          MINOR="${RAW_CODE: -1}"
           
-          echo "Versión calculada: $NEW_VER (Código: $NEW_CODE)"
-          echo "new_ver=$NEW_VER" >> $GITHUB_OUTPUT
-          echo "new_code=$NEW_CODE" >> $GITHUB_OUTPUT
+          # Fallback por si acaso
+          [ -z "$MAJOR" ] && MAJOR="1"
+          
+          FINAL_VER="v${MAJOR}.${MINOR}"
+          
+          echo "🔢 Input: $RAW_CODE"
+          echo "🏷️ Version Name: $FINAL_VER"
+          
+          echo "new_ver=$FINAL_VER" >> $GITHUB_OUTPUT
+          echo "new_code=$RAW_CODE" >> $GITHUB_OUTPUT
 
       # --- 2. SETUP JAVA & ANDROID ---
       - name: ☕ Setup Java 17
-        if: steps.check_changes.outputs.should_run == 'true'
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
@@ -85,161 +62,162 @@ jobs:
           cache: 'gradle'
 
       - name: ⚙️ Setup Android SDK
-        if: steps.check_changes.outputs.should_run == 'true'
         uses: android-actions/setup-android@v3
 
-      # --- 3. BUILD CON ALTERNATIVA (FALLBACK) ---
-      - name: 🔨 Build Release APK (With Fallback)
-        if: steps.check_changes.outputs.should_run == 'true'
+      # --- 3. BUILD (Con fallback) ---
+      - name: 🔨 Build Release APK
         run: |
           VER_CODE="${{ steps.versioning.outputs.new_code }}"
           VER_NAME="${{ steps.versioning.outputs.new_ver }}"
           cd QuickSwitch-App
           
-          # Inyectar versión
+          # Inyectar versión en Gradle
           find . -name "build.gradle.kts" -exec sed -i "s/versionCode\s*=\s*[0-9]\+/versionCode = $VER_CODE/" {} +
           find . -name "build.gradle.kts" -exec sed -i "s/versionName\s*=\s*\".*\"/versionName = \"$VER_NAME\"/" {} +
           chmod +x gradlew
           
-          echo "🚀 Intentando Build Rápido..."
+          echo "🚀 Building..."
           if ./gradlew assembleRelease --no-daemon --parallel --build-cache -x lint -x test; then
-             echo "✅ Build Rápido Exitoso"
+             echo "✅ Build OK"
           else
-             echo "⚠️ Build Rápido falló. Intentando ALTERNATIVA (Build Limpio)..."
-             # Alternativa: Limpiar caché y construir sin paralelo
-             ./gradlew clean assembleRelease --no-daemon --no-parallel --stacktrace
+             echo "⚠️ Falló build rápido. Reintentando limpio..."
+             ./gradlew clean assembleRelease --no-daemon --stacktrace
           fi
 
-      # --- 4. FIRMA MANUAL ---
+      # --- 4. FIRMAR APK ---
       - name: 🔐 Sign APK Manually
-        if: steps.check_changes.outputs.should_run == 'true'
         id: sign_app
         run: |
           echo "${{ secrets.SIGNING_KEY }}" | base64 -d > release.jks
           
+          # Encontrar build tools automáticamente
           BUILD_TOOLS_VER=$(ls $ANDROID_SDK_ROOT/build-tools/ | sort -r | head -n 1)
           TOOLS_PATH="$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS_VER"
           
           INPUT_APK="QuickSwitch-App/app/build/outputs/apk/release/app-release-unsigned.apk"
-          # Fallback de nombre por si Gradle cambia
           [ ! -f "$INPUT_APK" ] && INPUT_APK="QuickSwitch-App/app/build/outputs/apk/release/app-release.apk"
           
-          ALIGNED_APK="app-release-aligned.apk"
-          SIGNED_APK="QuickSwitch-Signed.apk"
+          ALIGNED="app-aligned.apk"
+          FINAL_APK="QuickSwitch-${{ steps.versioning.outputs.new_ver }}.apk"
 
-          "$TOOLS_PATH/zipalign" -v -p 4 "$INPUT_APK" "$ALIGNED_APK"
-          "$TOOLS_PATH/apksigner" sign --ks release.jks --ks-key-alias "${{ secrets.ALIAS }}" --ks-pass "pass:${{ secrets.KEY_STORE_PASSWORD }}" --key-pass "pass:${{ secrets.KEY_PASSWORD }}" --v4-signing-enabled false --out "$SIGNED_APK" "$ALIGNED_APK"
+          "$TOOLS_PATH/zipalign" -v -p 4 "$INPUT_APK" "$ALIGNED"
+          "$TOOLS_PATH/apksigner" sign --ks release.jks --ks-key-alias "${{ secrets.ALIAS }}" --ks-pass "pass:${{ secrets.KEY_STORE_PASSWORD }}" --key-pass "pass:${{ secrets.KEY_PASSWORD }}" --v4-signing-enabled false --out "$FINAL_APK" "$ALIGNED"
 
-          rm -f "$ALIGNED_APK" "$INPUT_APK"
-          echo "signed_apk_path=$SIGNED_APK" >> $GITHUB_OUTPUT
+          # Limpieza
+          rm -f "$ALIGNED" "$INPUT_APK" release.jks
+          
+          echo "apk_path=$FINAL_APK" >> $GITHUB_OUTPUT
 
-      # --- 5. PROCESAR ARTEFACTOS ---
-      - name: 📦 Process Artifacts
-        if: steps.check_changes.outputs.should_run == 'true'
+      # --- 5. PREPARAR ZIP (NOMBRE FIJO: QuickSwitch-Fork.zip) ---
+      - name: 📦 Create Zip & Metadata
         run: |
-          SIGNED_APK="${{ steps.sign_app.outputs.signed_apk_path }}"
-          cp "$SIGNED_APK" "./QuickSwitch-${{ steps.versioning.outputs.new_ver }}.apk"
-          cp "$SIGNED_APK" ./QuickSwitch.apk
-
-      # --- 6. UPDATE FILES ---
-      - name: 📝 Update Version Files
-        if: steps.check_changes.outputs.should_run == 'true'
-        run: |
-          NEW_CODE="${{ steps.versioning.outputs.new_code }}"
           NEW_VER="${{ steps.versioning.outputs.new_ver }}"
+          NEW_CODE="${{ steps.versioning.outputs.new_code }}"
+          APK_PATH="${{ steps.sign_app.outputs.apk_path }}"
+          
+          # 1. Copiar APK dentro con nombre corto
+          cp "$APK_PATH" ./QuickSwitch.apk
+          
+          # 2. Generar Changelog Detallado
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          echo "## $NEW_VER" > new_entry.md
+          echo "### 📋 Changelog" >> new_entry.md
+          if [ -z "$LAST_TAG" ]; then
+            git log --pretty=format:"* %s (%h)" >> new_entry.md
+          else
+            git log --pretty=format:"* %s (%h)" $LAST_TAG..HEAD >> new_entry.md
+          fi
+          echo -e "\n\n---" >> new_entry.md
+          
+          # 3. Update JSON
+          # Nota: Usamos el nombre fijo en el link del JSON también
+          ZIP_URL="https://github.com/${{ github.repository }}/releases/download/$NEW_VER/QuickSwitch-Fork.zip"
+          echo "{}" > update.json # Reset o leer existente
+          jq --null-input --arg ver "$NEW_VER" --arg code "$NEW_CODE" --arg url "$ZIP_URL" '{"version": $ver, "versionCode": ($code|tonumber), "zipUrl": $url}' > update.json
+          
+          # 4. Update Current.txt & Module.prop
           echo "$NEW_CODE" > current.txt
           sed -i "s/versionCode=.*/versionCode=$NEW_CODE/" module.prop
           sed -i "s/version=.*/version=$NEW_VER/" module.prop
 
-      # --- 7. METADATA & ZIP (CON ALTERNATIVA PYTHON Y CHANGELOG DETALLADO) ---
-      - name: 📄 Generate Metadata & Zip
-        if: steps.check_changes.outputs.should_run == 'true'
-        run: |
-          NEW_VER="${{ steps.versioning.outputs.new_ver }}"
-          NEW_CODE="${{ steps.versioning.outputs.new_code }}"
+          # 5. Crear ZIP (Excluyendo basura)
+          # Nombre FIJO solicitado: QuickSwitch-Fork.zip
+          ZIP_NAME="QuickSwitch-Fork.zip"
           
-          # --- CHANGELOG DETALLADO ---
-          # Busca el último tag, si falla asume que es el inicio
-          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          # Limpiar antes de comprimir
+          rm -f app-release-*.apk *.idsig
           
-          echo "## $NEW_VER" > new_entry.md
-          echo "### 📋 Changelog" >> new_entry.md
-          
-          if [ -z "$LAST_TAG" ]; then
-            git log --pretty=format:"* %s (%h) - @%an" >> new_entry.md
-          else
-            echo "Changes from $LAST_TAG to HEAD:"
-            git log --pretty=format:"* %s (%h) - @%an" $LAST_TAG..HEAD >> new_entry.md
-          fi
-          
-          echo -e "\n---" >> new_entry.md
-          [ -f changelog.md ] && cat new_entry.md changelog.md > tmp && mv tmp changelog.md || cp new_entry.md changelog.md
+          zip -r "$ZIP_NAME" . \
+            -x "*.git*" ".github/*" "*.md" "*.yml" "current.txt" "QuickSwitch-App/*" \
+            -x "QuickSwitch-v*.apk" "new_entry.md" "temp.json" "*.jks"
+            
+          echo "zip_name=$ZIP_NAME" >> $GITHUB_OUTPUT
 
-          # JSON Update
-          ZIP_URL="https://github.com/${{ github.repository }}/releases/download/$NEW_VER/QuickSwitch-$NEW_VER.zip"
-          CHANGELOG_URL="https://raw.githubusercontent.com/${{ github.repository }}/anyfix/master/changelog.md"
-          
-          if [ ! -s update.json ]; then echo "{}" > update.json; fi
-          jq --arg ver "$NEW_VER" --arg code "$NEW_CODE" --arg url "$ZIP_URL" --arg log "$CHANGELOG_URL" '.version = $ver | .versionCode = ($code | tonumber) | .zipUrl = $url | .changelog = $log' update.json > temp.json && mv temp.json update.json
-
-          # --- ZIP CON ALTERNATIVA ---
-          rm -f QuickSwitch-Signed.apk app-release-*.apk *.idsig *.jks
-          
-          echo "Intentando comprimir con ZIP del sistema..."
-          if zip -r "QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip" . -x "*.git*" ".github/*" "*.md" "*.yml" "update.json" "current.txt" "QuickSwitch-App/*" -x "QuickSwitch-v*.apk" "new_entry.md" "temp.json"; then
-             echo "✅ Zip creado correctamente."
-          else
-             echo "⚠️ Comando ZIP falló. Usando ALTERNATIVA (Python)..."
-             python3 -c "import shutil; shutil.make_archive('QuickSwitch-${{ steps.versioning.outputs.new_ver }}', 'zip', '.', '.')"
-             echo "✅ Zip creado con Python."
-          fi
-
-      # --- 8. SUBIDA A GOFILE (NUEVO) ---
+      # --- 6. SUBIDA A GOFILE (RESILIENTE) ---
       - name: ☁️ Upload to GoFile
-        if: steps.check_changes.outputs.should_run == 'true'
         id: gofile
+        continue-on-error: true  # <--- ESTO EVITA QUE FALLE TODO SI GOFILE CAE
         run: |
-          FILE_ZIP="QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip"
-          FILE_APK="QuickSwitch-${{ steps.versioning.outputs.new_ver }}.apk"
+          echo "### ☁️ GoFile Mirrors" >> new_entry.md
           
-          echo "🔎 Buscando mejor servidor de GoFile..."
-          SERVER=$(curl -s https://api.gofile.io/getServer | jq -r '.data.server')
+          FILE_APK="${{ steps.sign_app.outputs.apk_path }}"
+          FILE_ZIP="${{ steps.create_zip_metadata.outputs.zip_name }}" # QuickSwitch-Fork.zip
           
-          echo "📤 Subiendo ZIP..."
-          UPLOAD_ZIP=$(curl -F "file=@$FILE_ZIP" https://$SERVER.gofile.io/uploadFile)
-          LINK_ZIP=$(echo "$UPLOAD_ZIP" | jq -r '.data.downloadPage')
-          
-          echo "📤 Subiendo APK..."
-          UPLOAD_APK=$(curl -F "file=@$FILE_APK" https://$SERVER.gofile.io/uploadFile)
-          LINK_APK=$(echo "$UPLOAD_APK" | jq -r '.data.downloadPage')
-          
-          echo "::notice title=GoFile Links::ZIP: $LINK_ZIP | APK: $LINK_APK"
-          echo "zip_link=$LINK_ZIP" >> $GITHUB_OUTPUT
-          echo "apk_link=$LINK_APK" >> $GITHUB_OUTPUT
-          
-          # Agregar links al changelog del release
-          echo -e "\n### ☁️ Mirrors (GoFile)\n* **Zip:** $LINK_ZIP\n* **Apk:** $LINK_APK" >> new_entry.md
+          # Usamos QuickSwitch-Fork.zip directamente si no encuentra variable (fallback)
+          [ ! -f "$FILE_ZIP" ] && FILE_ZIP="QuickSwitch-Fork.zip"
 
-      # --- 9. COMMIT ---
-      - name: 🤖 Commit Bump
-        if: steps.check_changes.outputs.should_run == 'true' && steps.check_changes.outputs.is_manual == 'true'
+          # 1. Obtener Servidor (Tu código corregido)
+          SERVER=$(curl -s https://api.gofile.io/servers | jq -r '.data.servers[0].name')
+          
+          if [ "$SERVER" == "null" ] || [ -z "$SERVER" ]; then
+            echo "❌ No se pudo obtener servidor de GoFile."
+            exit 1
+          fi
+
+          echo "🌐 Servidor asignado: $SERVER"
+
+          # Función de subida
+          upload_file() {
+            local file=$1
+            # Subida silenciosa (-s) para parsear limpio con jq
+            local resp=$(curl -s -F "file=@$file" "https://${SERVER}.gofile.io/contents/uploadfile")
+            echo $resp | jq -r '.data.downloadPage'
+          }
+
+          # Subir APK
+          echo "📤 Subiendo APK ($FILE_APK)..."
+          LINK_APK=$(upload_file "$FILE_APK")
+          if [ "$LINK_APK" != "null" ]; then
+             echo "* **APK:** $LINK_APK" >> new_entry.md
+             echo "✅ APK Link: $LINK_APK"
+          fi
+
+          # Subir ZIP
+          echo "📤 Subiendo ZIP ($FILE_ZIP)..."
+          LINK_ZIP=$(upload_file "$FILE_ZIP")
+          if [ "$LINK_ZIP" != "null" ]; then
+             echo "* **ZIP:** $LINK_ZIP" >> new_entry.md
+             echo "✅ ZIP Link: $LINK_ZIP"
+          fi
+
+      # --- 7. COMMIT & PUSH ---
+      - name: 🤖 Commit Updates
         run: |
           git config --local user.email "bot@noreply.github.com"
           git config --local user.name "github-actions"
-          git add module.prop update.json changelog.md current.txt QuickSwitch-App/**/build.gradle.kts
-          git commit -m "🤖 Bump version to ${{ steps.versioning.outputs.new_ver }} [skip ci]" || echo "No changes"
+          git add module.prop update.json current.txt
+          git commit -m "🤖 Update to ${{ steps.versioning.outputs.new_ver }}" || echo "No changes"
           git push origin HEAD:anyfix/master
 
-      # --- 10. RELEASE ---
-      - name: 🚀 Publish Release
-        if: steps.check_changes.outputs.should_run == 'true' && steps.check_changes.outputs.is_manual == 'true'
+      # --- 8. GITHUB RELEASE ---
+      - name: 🚀 Publish GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.versioning.outputs.new_ver }}
           name: QuickSwitch ${{ steps.versioning.outputs.new_ver }}
           body_path: new_entry.md
           files: |
-            QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip
-            QuickSwitch-${{ steps.versioning.outputs.new_ver }}.apk
+            QuickSwitch-Fork.zip
+            ${{ steps.sign_app.outputs.apk_path }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
