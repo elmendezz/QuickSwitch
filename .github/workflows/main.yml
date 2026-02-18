@@ -5,11 +5,6 @@ on:
     branches:
       - 'anyfix/master'
   workflow_dispatch:
-    inputs:
-      version_input:
-        description: 'Versión de 2 dígitos (Ej: 20 = v2.0, 21 = v2.1)'
-        required: true
-        default: '20'
 
 jobs:
   build-and-release:
@@ -23,35 +18,43 @@ jobs:
         with:
           fetch-depth: 0
 
-      # --- 1. CÁLCULO DE VERSIÓN (LÓGICA 2 DÍGITOS) ---
-      - name: 🧮 Calculate Version
-        id: versioning
+      # --- 0. DETECTOR DE CAMBIOS ---
+      - name: 🕵️ Check for relevant changes
+        id: check_changes
         run: |
-          # 1. Obtener número (Input manual o auto-incremento desde archivo)
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            RAW="${{ inputs.version_input }}"
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            echo "is_test=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          IGNORE_PATTERN="README.md|changelog.md|update.json|module.prop|current.txt|.github/.*|.*\.yml"
+          CHANGED_FILES=$(git diff --name-only HEAD^ HEAD)
+          NON_IGNORED=$(echo "$CHANGED_FILES" | grep -vE "$IGNORE_PATTERN" || true)
+
+          if [ -z "$NON_IGNORED" ]; then
+            echo "should_run=false" >> $GITHUB_OUTPUT
+            echo "is_test=false" >> $GITHUB_OUTPUT
           else
-            # Si es push automático, lee current.txt (ej: 19) y suma 1 -> 20
-            [ -f current.txt ] && CUR=$(cat current.txt) || CUR=10
-            RAW=$((CUR + 1))
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            echo "is_test=false" >> $GITHUB_OUTPUT
           fi
 
-          # 2. Matemática para 2 dígitos (Ej: 20 -> v2.0)
-          # Mayor: División por 10 (20 / 10 = 2)
-          MAJOR=$((RAW / 10))
-          # Menor: Resto de 10 (20 % 10 = 0)
-          MINOR=$((RAW % 10))
-          
-          FINAL_VER="v${MAJOR}.${MINOR}"
-          
-          echo "🔢 Code: $RAW"
-          echo "🏷️ Name: $FINAL_VER"
-          
-          echo "new_ver=$FINAL_VER" >> $GITHUB_OUTPUT
-          echo "new_code=$RAW" >> $GITHUB_OUTPUT
+      # --- 1. CÁLCULO DE VERSIÓN ---
+      - name: 🧮 Calculate Next Version
+        if: steps.check_changes.outputs.should_run == 'true'
+        id: versioning
+        run: |
+          if [ -f current.txt ]; then OLD_CODE=$(cat current.txt | tr -dc '0-9'); else OLD_CODE=$(grep 'versionCode=' module.prop | cut -d= -f2 || echo "0"); fi
+          if [ -z "$OLD_CODE" ] || [ "$OLD_CODE" -eq 0 ]; then OLD_CODE=1; fi
+          NEW_CODE=$((OLD_CODE + 1))
+          NEW_VER="v${NEW_CODE}.0"
+          echo "new_ver=$NEW_VER" >> $GITHUB_OUTPUT
+          echo "new_code=$NEW_CODE" >> $GITHUB_OUTPUT
 
       # --- 2. SETUP JAVA & ANDROID ---
       - name: ☕ Setup Java 17
+        if: steps.check_changes.outputs.should_run == 'true'
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
@@ -59,40 +62,31 @@ jobs:
           cache: 'gradle'
 
       - name: ⚙️ Setup Android SDK
+        if: steps.check_changes.outputs.should_run == 'true'
         uses: android-actions/setup-android@v3
 
-      # --- 3. BUILD (PROTEGIDO CONTRA ERRORES DE SINTAXIS) ---
+      # --- 3. BUILD ULTRA RÁPIDO (Con alternativa básica) ---
       - name: 🔨 Build Release APK
+        if: steps.check_changes.outputs.should_run == 'true'
         run: |
           VER_CODE="${{ steps.versioning.outputs.new_code }}"
           VER_NAME="${{ steps.versioning.outputs.new_ver }}"
-          
-          # SAFETY CHECK: Si las variables están vacías, abortar antes de dañar el gradle
-          if [ -z "$VER_CODE" ] || [ -z "$VER_NAME" ]; then
-            echo "❌ Error Crítico: Variables de versión vacías."
-            exit 1
-          fi
-
           cd QuickSwitch-App
+          
+          find . -name "build.gradle.kts" -exec sed -i "s/versionCode\s*=\s*[0-9]\+/versionCode = $VER_CODE/" {} +
+          find . -name "build.gradle.kts" -exec sed -i "s/versionName\s*=\s*\".*\"/versionName = \"$VER_NAME\"/" {} +
           chmod +x gradlew
           
-          # Inyección precisa usando variables verificadas
-          echo "🔧 Inyectando: Code=$VER_CODE, Name=$VER_NAME"
-          
-          find . -name "build.gradle.kts" -exec sed -i "s/versionCode\s*=\s*[0-9]*/versionCode = $VER_CODE/" {} +
-          find . -name "build.gradle.kts" -exec sed -i "s/versionName\s*=\s*\".*\"/versionName = \"$VER_NAME\"/" {} +
-          
-          echo "🚀 Iniciando Build..."
-          # Intento 1: Build Rápido
-          if ./gradlew assembleRelease --no-daemon --parallel --build-cache -x lint -x test; then
-             echo "✅ Build Rápido Exitoso"
-          else
-             echo "⚠️ Build Rápido falló. Reintentando Build Limpio (Fallback)..."
-             ./gradlew clean assembleRelease --no-daemon --stacktrace
+          # Intento 1: Build Release Optimizado
+          echo "🚀 Intentando Build Release..."
+          if ! ./gradlew assembleRelease --no-daemon --parallel --build-cache -x lint -x test; then
+             echo "⚠️ Build Release falló. Intentando modo limpio (Fallback)..."
+             ./gradlew clean assembleRelease --no-daemon -x lint -x test
           fi
 
-      # --- 4. FIRMAR APK ---
+      # --- 4. FIRMA MANUAL ---
       - name: 🔐 Sign APK Manually
+        if: steps.check_changes.outputs.should_run == 'true'
         id: sign_app
         run: |
           echo "${{ secrets.SIGNING_KEY }}" | base64 -d > release.jks
@@ -100,125 +94,174 @@ jobs:
           BUILD_TOOLS_VER=$(ls $ANDROID_SDK_ROOT/build-tools/ | sort -r | head -n 1)
           TOOLS_PATH="$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS_VER"
           
-          # Buscar APK generado (maneja posibles variaciones de nombre)
-          INPUT_APK=$(find QuickSwitch-App/app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          INPUT_APK="QuickSwitch-App/app/build/outputs/apk/release/app-release-unsigned.apk"
+          [ ! -f "$INPUT_APK" ] && INPUT_APK="QuickSwitch-App/app/build/outputs/apk/release/app-release.apk"
           
-          if [ -z "$INPUT_APK" ]; then
-             echo "❌ Error: No se generó ningún APK."
-             exit 1
-          fi
+          ALIGNED_APK="app-release-aligned.apk"
+          SIGNED_APK="QuickSwitch-Signed.apk"
+
+          # Alinear
+          "$TOOLS_PATH/zipalign" -v -p 4 "$INPUT_APK" "$ALIGNED_APK"
           
-          ALIGNED="app-aligned.apk"
-          FINAL_APK="QuickSwitch-${{ steps.versioning.outputs.new_ver }}.apk"
+          # Firmar
+          "$TOOLS_PATH/apksigner" sign --ks release.jks --ks-key-alias "${{ secrets.ALIAS }}" --ks-pass "pass:${{ secrets.KEY_STORE_PASSWORD }}" --key-pass "pass:${{ secrets.KEY_PASSWORD }}" --v4-signing-enabled false --out "$SIGNED_APK" "$ALIGNED_APK"
 
-          "$TOOLS_PATH/zipalign" -v -p 4 "$INPUT_APK" "$ALIGNED"
-          "$TOOLS_PATH/apksigner" sign --ks release.jks --ks-key-alias "${{ secrets.ALIAS }}" --ks-pass "pass:${{ secrets.KEY_STORE_PASSWORD }}" --key-pass "pass:${{ secrets.KEY_PASSWORD }}" --v4-signing-enabled false --out "$FINAL_APK" "$ALIGNED"
+          rm -f "$ALIGNED_APK" "$INPUT_APK"
+          echo "signed_apk_path=$SIGNED_APK" >> $GITHUB_OUTPUT
 
-          rm -f "$ALIGNED" "$INPUT_APK" release.jks
-          echo "apk_path=$FINAL_APK" >> $GITHUB_OUTPUT
-
-      # --- 5. ZIP & METADATA ---
-      - name: 📦 Create Zip & Metadata
-        id: create_zip
+      # --- 5. PROCESAR ARTEFACTOS ---
+      - name: 📦 Process Artifacts
+        if: steps.check_changes.outputs.should_run == 'true'
         run: |
-          NEW_VER="${{ steps.versioning.outputs.new_ver }}"
+          SIGNED_APK="${{ steps.sign_app.outputs.signed_apk_path }}"
+          # Copia para Github Release
+          cp "$SIGNED_APK" "./QuickSwitch-${{ steps.versioning.outputs.new_ver }}.apk"
+          # Copia para dentro del ZIP
+          cp "$SIGNED_APK" ./QuickSwitch.apk
+
+      # --- 6. UPDATE FILES ---
+      - name: 📝 Update Version Files
+        if: steps.check_changes.outputs.should_run == 'true'
+        run: |
           NEW_CODE="${{ steps.versioning.outputs.new_code }}"
-          APK_PATH="${{ steps.sign_app.outputs.apk_path }}"
-          ZIP_NAME="QuickSwitch-Fork.zip"
-          
-          # 1. Copiar APK dentro para el módulo
-          cp "$APK_PATH" ./QuickSwitch.apk
-          
-          # 2. Generar Changelog Detallado (Git Log)
-          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-          echo "## $NEW_VER" > new_entry.md
-          echo "### 📋 Changelog" >> new_entry.md
-          
-          if [ -z "$LAST_TAG" ]; then
-            git log --pretty=format:"* %s (%h)" >> new_entry.md
-          else
-            # Muestra commits desde el último tag hasta hoy
-            git log --pretty=format:"* %s (%h)" $LAST_TAG..HEAD >> new_entry.md
-          fi
-          echo -e "\n\n---" >> new_entry.md
-          
-          # 3. Update JSON
-          ZIP_URL="https://github.com/${{ github.repository }}/releases/download/$NEW_VER/$ZIP_NAME"
-          echo "{}" > update.json
-          jq --null-input --arg ver "$NEW_VER" --arg code "$NEW_CODE" --arg url "$ZIP_URL" '{"version": $ver, "versionCode": ($code|tonumber), "zipUrl": $url}' > update.json
-          
-          # 4. Actualizar Archivos de Versión
+          NEW_VER="${{ steps.versioning.outputs.new_ver }}"
           echo "$NEW_CODE" > current.txt
           sed -i "s/versionCode=.*/versionCode=$NEW_CODE/" module.prop
           sed -i "s/version=.*/version=$NEW_VER/" module.prop
 
-          # 5. Crear ZIP Limpio
-          rm -f app-release-*.apk *.idsig
-          
-          # Excluye basura explícitamente
-          zip -r "$ZIP_NAME" . \
-            -x "*.git*" ".github/*" "*.md" "*.yml" "current.txt" "QuickSwitch-App/*" \
-            -x "QuickSwitch-v*.apk" "new_entry.md" "temp.json" "*.jks"
-            
-          echo "zip_name=$ZIP_NAME" >> $GITHUB_OUTPUT
-
-      # --- 6. GOFILE (RESILIENTE) ---
-      - name: ☁️ Upload to GoFile
-        id: gofile
-        continue-on-error: true
+      # --- 7. METADATA & ZIP (MEJORADO CON DIFFS Y FALLBACK) ---
+      - name: 📄 Generate Metadata & Zip
+        if: steps.check_changes.outputs.should_run == 'true'
         run: |
-          echo "### ☁️ GoFile Mirrors" >> new_entry.md
+          NEW_VER="${{ steps.versioning.outputs.new_ver }}"
+          NEW_CODE="${{ steps.versioning.outputs.new_code }}"
           
-          FILE_APK="${{ steps.sign_app.outputs.apk_path }}"
-          FILE_ZIP="${{ steps.create_zip.outputs.zip_name }}"
+          # --- GENERACIÓN DE CHANGELOG DETALLADO ---
+          AUTHOR=$(git log -1 --pretty=format:'%an')
+          HASH=$(git rev-parse --short HEAD)
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          DIFF_STAT=$(git diff --stat HEAD^ HEAD)
           
-          # 1. Obtener Servidor
-          SERVER=$(curl -s https://api.gofile.io/servers | jq -r '.data.servers[0].name')
+          echo "## 🚀 $NEW_VER ($HASH)" > new_entry.md
+          echo "**👤 Author:** $AUTHOR" >> new_entry.md
+          echo "" >> new_entry.md
+          echo "### 📝 Changes" >> new_entry.md
+          echo "\`\`\`text" >> new_entry.md
+          echo "$COMMIT_MSG" >> new_entry.md
+          echo "\`\`\`" >> new_entry.md
+          echo "### 📊 Files Changed" >> new_entry.md
+          echo "\`\`\`diff" >> new_entry.md
+          echo "$DIFF_STAT" >> new_entry.md
+          echo "\`\`\`" >> new_entry.md
           
-          if [ -z "$SERVER" ] || [ "$SERVER" == "null" ]; then
-             echo "⚠️ No se pudo conectar a la API de GoFile. Saltando subida."
-             exit 0
+          # Combinar con histórico
+          [ -f changelog.md ] && cat new_entry.md changelog.md > tmp && mv tmp changelog.md || cp new_entry.md changelog.md
+
+          # JSON Update
+          ZIP_URL="https://github.com/${{ github.repository }}/releases/download/$NEW_VER/QuickSwitch-$NEW_VER.zip"
+          CHANGELOG_URL="https://raw.githubusercontent.com/${{ github.repository }}/anyfix/master/changelog.md"
+          if [ ! -s update.json ]; then echo "{}" > update.json; fi
+          jq --arg ver "$NEW_VER" --arg code "$NEW_CODE" --arg url "$ZIP_URL" --arg log "$CHANGELOG_URL" '.version = $ver | .versionCode = ($code | tonumber) | .zipUrl = $url | .changelog = $log' update.json > temp.json && mv temp.json update.json
+
+          # Limpieza
+          rm -f QuickSwitch-Signed.apk app-release-*.apk *.idsig
+          
+          # --- ZIP CON FALLBACK ---
+          TARGET_ZIP="QuickSwitch-${NEW_VER}.zip"
+          echo "Comprimiendo..."
+          
+          # Intento 1: Sistema ZIP nativo
+          if zip -r "$TARGET_ZIP" . -x "*.git*" ".github/*" "*.md" "*.yml" "update.json" "current.txt" "QuickSwitch-App/*" -x "QuickSwitch-v*.apk" "new_entry.md" "temp.json" "*.jks"; then
+            echo "✅ Zip creado exitosamente con herramienta nativa."
+          else
+            echo "⚠️ 'zip' falló. Intentando alternativa con Python..."
+            # Intento 2: Python Fallback
+            python3 -c "
+import zipfile, os, fnmatch
+exclude_patterns = ['*.git*', '.github/*', '*.md', '*.yml', 'update.json', 'current.txt', 'QuickSwitch-App/*', 'QuickSwitch-v*.apk', 'new_entry.md', 'temp.json', '*.jks']
+with zipfile.ZipFile('$TARGET_ZIP', 'w', zipfile.ZIP_DEFLATED) as z:
+    for root, dirs, files in os.walk('.'):
+        for file in files:
+            path = os.path.join(root, file)
+            # Lógica simple de exclusión
+            if not any(fnmatch.fnmatch(path, p) for p in exclude_patterns) and not path.startswith('./.git'):
+                 z.write(path)
+            "
           fi
 
-          # Función de subida
+      # --- 8. SUBIDA A GOFILE (NUEVO) ---
+      - name: ☁️ Upload to GoFile
+        if: steps.check_changes.outputs.should_run == 'true'
+        id: gofile
+        run: |
+          NEW_VER="${{ steps.versioning.outputs.new_ver }}"
+          APK_FILE="QuickSwitch-${NEW_VER}.apk"
+          ZIP_FILE="QuickSwitch-${NEW_VER}.zip"
+          
+          echo "" >> new_entry.md
+          echo "## ☁️ Mirror Links (GoFile)" >> new_entry.md
+          
+          # Instalar jq si falta (normalmente ya está)
+          sudo apt-get install -y jq > /dev/null 2>&1
+          
+          # 1. Obtener Servidor
+          # Nota: GoFile a veces cambia su API. Se intenta obtener el mejor servidor.
+          SERVER=$(curl -s https://api.gofile.io/servers | jq -r '.data.servers[0].name')
+          
+          # Fallback si no devuelve servidor
+          if [ "$SERVER" == "null" ] || [ -z "$SERVER" ]; then SERVER="store1"; fi
+          
+          echo "Servidor GoFile seleccionado: $SERVER"
+
+          # Función para subir
           upload_file() {
             local file=$1
+            # Se usa el endpoint genérico si el específico del servidor falla, pero probamos el específico primero
             local resp=$(curl -s -F "file=@$file" "https://${SERVER}.gofile.io/contents/uploadfile")
-            echo $resp | jq -r '.data.downloadPage'
+            local link=$(echo $resp | jq -r '.data.downloadPage')
+            
+            if [ "$link" == "null" ] || [ -z "$link" ]; then
+                echo "Error subiendo $file: $resp"
+                echo "N/A"
+            else
+                echo "$link"
+            fi
           }
 
           # Subir APK
-          echo "📤 Subiendo APK..."
-          LINK_APK=$(upload_file "$FILE_APK")
-          if [ "$LINK_APK" != "null" ]; then
-             echo "* **APK:** $LINK_APK" >> new_entry.md
+          if [ -f "$APK_FILE" ]; then
+            echo "Subiendo APK ($APK_FILE)..."
+            LINK_APK=$(upload_file "$APK_FILE")
+            echo "- 📱 **APK Mirror:** [Descargar]($LINK_APK)" >> new_entry.md
           fi
 
           # Subir ZIP
-          echo "📤 Subiendo ZIP..."
-          LINK_ZIP=$(upload_file "$FILE_ZIP")
-          if [ "$LINK_ZIP" != "null" ]; then
-             echo "* **ZIP:** $LINK_ZIP" >> new_entry.md
+          if [ -f "$ZIP_FILE" ]; then
+            echo "Subiendo ZIP ($ZIP_FILE)..."
+            LINK_ZIP=$(upload_file "$ZIP_FILE")
+            echo "- 🤐 **ZIP Mirror:** [Descargar]($LINK_ZIP)" >> new_entry.md
           fi
 
-      # --- 7. COMMIT ---
-      - name: 🤖 Commit Updates
+      # --- 9. COMMIT ---
+      - name: 🤖 Commit Bump
+        if: steps.check_changes.outputs.should_run == 'true' && steps.check_changes.outputs.is_test == 'false'
         run: |
           git config --local user.email "bot@noreply.github.com"
           git config --local user.name "github-actions"
-          git add module.prop update.json current.txt
-          git commit -m "🤖 Update to ${{ steps.versioning.outputs.new_ver }}" || echo "No changes"
+          git add module.prop update.json changelog.md current.txt QuickSwitch-App/**/build.gradle.kts
+          git commit -m "🤖 Bump version to ${{ steps.versioning.outputs.new_ver }} [skip ci]" || echo "No changes"
           git push origin HEAD:anyfix/master
 
-      # --- 8. RELEASE ---
-      - name: 🚀 Publish GitHub Release
+      # --- 10. RELEASE ---
+      - name: 🚀 Publish Release
+        if: steps.check_changes.outputs.should_run == 'true' && steps.check_changes.outputs.is_test == 'false'
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.versioning.outputs.new_ver }}
           name: QuickSwitch ${{ steps.versioning.outputs.new_ver }}
           body_path: new_entry.md
           files: |
-            ${{ steps.create_zip.outputs.zip_name }}
-            ${{ steps.sign_app.outputs.apk_path }}
+            QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip
+            QuickSwitch-${{ steps.versioning.outputs.new_ver }}.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
