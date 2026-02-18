@@ -1,67 +1,83 @@
-name: Magisk Auto-Update V6
+name: Auto Magisk Release (AnyFix)
 
 on:
   push:
     branches:
-      - main  # O 'master', asegúrate de que sea el nombre de tu rama
+      - 'anyfix/master'  # <--- IMPORTANTE: Entre comillas simples por la barra /
     paths-ignore:
       - 'README.md'
       - 'changelog.md'
       - '.github/**'
+      - '*.yml'
+      - '*.yaml'
 
 jobs:
-  build:
+  build-and-release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # Necesario para editar archivos y crear releases
+    
     steps:
-      - name: Checkout
+      - name: Checkout del código
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: 'anyfix/master' # Asegura que bajamos la rama correcta
 
-      - name: Bump Version and Update Files
-        id: bump
+      - name: Automatizar Versión y JSON
+        id: versioning
         run: |
-          # Extraer versionCode actual del module.prop
+          # 1. Leer versionCode actual
           OLD_CODE=$(grep 'versionCode=' module.prop | cut -d= -f2)
+          if [ -z "$OLD_CODE" ]; then OLD_CODE=1; fi
+          
+          # 2. Calcular nuevos valores
           NEW_CODE=$((OLD_CODE + 1))
           NEW_VER="v${NEW_CODE}.0"
           
-          # Actualizar module.prop
+          echo "Nueva versión detectada: $NEW_VER"
+          
+          # 3. Editar module.prop
           sed -i "s/versionCode=.*/versionCode=$NEW_CODE/" module.prop
           sed -i "s/version=.*/version=$NEW_VER/" module.prop
           
-          # Actualizar update.json
-          # Cambia 'tu_usuario' y 'tu_repo' por los tuyos
-          ZIP_URL="https://github.com/${{ github.repository }}/releases/download/$NEW_VER/modulo-$NEW_VER.zip"
+          # 4. Actualizar update.json
+          # NOTA: Asegúrate de que 'tu_usuario/tu_repo' sea correcto en la URL final si esto falla
+          ZIP_URL="https://github.com/${{ github.repository }}/releases/download/$NEW_VER/QuickSwitch-$NEW_VER.zip"
           
+          # Si update.json no existe, crea uno básico, si existe, lo actualiza
+          if [ ! -f update.json ]; then
+            echo "{}" > update.json
+          fi
+
           jq --arg ver "$NEW_VER" \
              --arg code "$NEW_CODE" \
              --arg url "$ZIP_URL" \
              '.version = $ver | .versionCode = ($code | tonumber) | .zipUrl = $url' \
              update.json > temp.json && mv temp.json update.json
           
-          echo "new_tag=$NEW_VER" >> $GITHUB_OUTPUT
+          echo "new_ver=$NEW_VER" >> $GITHUB_OUTPUT
 
-      - name: Zip Module
+      - name: Crear ZIP del Módulo
         run: |
-          zip -r "modulo-${{ steps.bump.outputs.new_tag }}.zip" . -x "*.git*" ".github/*" "README.md"
+          # Crea el zip con el nombre de la nueva versión
+          zip -r "QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip" . -x "*.git*" ".github/*" "*.md" "*.yml" "update.json"
 
-      - name: Commit & Push Changes
+      - name: Guardar cambios (Commit & Push)
         run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
           git add module.prop update.json
-          git commit -m "Auto-bump to ${{ steps.bump.outputs.new_tag }} [skip ci]"
-          git push
+          git commit -m "Auto-bump to ${{ steps.versioning.outputs.new_ver }} [skip ci]"
+          # Empujamos explícitamente a anyfix/master
+          git push origin HEAD:anyfix/master
 
-      - name: Create Release
+      - name: Publicar Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ steps.bump.outputs.new_tag }}
-          name: Release ${{ steps.bump.outputs.new_tag }}
+          tag_name: ${{ steps.versioning.outputs.new_ver }}
+          name: QuickSwitch ${{ steps.versioning.outputs.new_ver }}
           body_path: changelog.md
-          files: "modulo-${{ steps.bump.outputs.new_tag }}.zip"
+          files: "QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
