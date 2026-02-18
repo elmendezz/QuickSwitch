@@ -1,5 +1,3 @@
-name: Auto Magisk Release (AnyFix + App)
-
 on:
   push:
     branches:
@@ -7,9 +5,7 @@ on:
     paths-ignore:
       - 'README.md'
       - 'changelog.md'
-      - '.github/**'
-      - '*.yml'
-      - '*.yaml'
+      - 'update.json'
 
 jobs:
   build-and-release:
