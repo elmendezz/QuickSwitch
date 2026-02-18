@@ -1,9 +1,15 @@
-name: Auto Magisk Release (AnyFix)
+name: Auto Magisk Release (AnyFix + App)
 
 on:
   push:
     branches:
       - 'anyfix/master'
+    paths-ignore:
+      - 'README.md'
+      - 'changelog.md'
+      - '.github/**'
+      - '*.yml'
+      - '*.yaml'
 
 jobs:
   build-and-release:
@@ -18,50 +24,100 @@ jobs:
           fetch-depth: 0
           ref: 'anyfix/master'
 
-      - name: Automatizar Versión y JSON
+      # --- 1. CONFIGURACIÓN DE VERSIÓN ---
+      - name: Calcular Versión y Actualizar Props
         id: versioning
         run: |
-          # 1. Leer versionCode actual
+          # Leer versionCode actual del modulo Magisk
           OLD_CODE=$(grep 'versionCode=' module.prop | cut -d= -f2)
           if [ -z "$OLD_CODE" ]; then OLD_CODE=1; fi
           
-          # 2. Calcular nuevos valores
+          # Calcular nuevos valores
           NEW_CODE=$((OLD_CODE + 1))
           NEW_VER="v${NEW_CODE}.0"
           
-          echo "Nueva versión detectada: $NEW_VER"
+          echo "Nueva versión detectada: $NEW_VER ($NEW_CODE)"
           
-          # 3. Editar module.prop
+          # Editar module.prop
           sed -i "s/versionCode=.*/versionCode=$NEW_CODE/" module.prop
           sed -i "s/version=.*/version=$NEW_VER/" module.prop
           
-          # 4. Construir URL del release
+          # Exportar variables para usarlas en los siguientes pasos
+          echo "new_ver=$NEW_VER" >> $GITHUB_OUTPUT
+          echo "new_code=$NEW_CODE" >> $GITHUB_OUTPUT
+
+      # --- 2. ACTUALIZACIÓN DEL JSON ---
+      - name: Actualizar update.json
+        run: |
+          NEW_VER="${{ steps.versioning.outputs.new_ver }}"
+          NEW_CODE="${{ steps.versioning.outputs.new_code }}"
           ZIP_URL="https://github.com/${{ github.repository }}/releases/download/$NEW_VER/QuickSwitch-$NEW_VER.zip"
           
-          # 5. Crear update.json si no existe
-          if [ ! -f update.json ]; then
-            echo "{}" > update.json
-          fi
+          if [ ! -f update.json ]; then echo "{}" > update.json; fi
 
-          # 6. Actualizar JSON
+          # Actualizamos el JSON (Mantenemos tu estructura)
           jq --arg ver "$NEW_VER" \
              --arg code "$NEW_CODE" \
              --arg url "$ZIP_URL" \
              '.version = $ver | .versionCode = ($code | tonumber) | .zipUrl = $url' \
              update.json > temp.json && mv temp.json update.json
-          
-          echo "new_ver=$NEW_VER" >> $GITHUB_OUTPUT
 
+      # --- 3. BLOQUE ANDROID (NUEVO) ---
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Actualizar Versión en App Android
+        run: |
+          # Definir variables
+          VER_CODE="${{ steps.versioning.outputs.new_code }}"
+          VER_NAME="${{ steps.versioning.outputs.new_ver }}"
+          
+          echo "Aplicando v$VER_CODE a la app Android..."
+          
+          cd QuickSwitch-App
+          
+          # Intentamos actualizar build.gradle (Estándar moderno)
+          # Busca 'versionCode 5' y lo cambia, busca 'versionName "1.0"' y lo cambia
+          find . -name "build.gradle" -exec sed -i "s/versionCode .*/versionCode $VER_CODE/" {} +
+          find . -name "build.gradle" -exec sed -i "s/versionName .*/versionName \"$VER_NAME\"/" {} +
+          
+          # Intentamos actualizar AndroidManifest.xml (Método antiguo, por si acaso)
+          find . -name "AndroidManifest.xml" -exec sed -i "s/android:versionCode=\".*\"/android:versionCode=\"$VER_CODE\"/" {} +
+          find . -name "AndroidManifest.xml" -exec sed -i "s/android:versionName=\".*\"/android:versionName=\"$VER_NAME\"/" {} +
+
+      - name: Compilar APK (Debug)
+        run: |
+          cd QuickSwitch-App
+          chmod +x gradlew
+          # Usamos assembleDebug para no necesitar firmar con keystore por ahora
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Renombrar y Mover APK
+        run: |
+          # Buscamos el APK generado y lo movemos a la raíz con nombre bonito
+          find QuickSwitch-App -name "*-debug.apk" -exec mv {} QuickSwitch-App-${{ steps.versioning.outputs.new_ver }}.apk \;
+
+      # --- 4. EMPAQUETADO Y SUBIDA ---
       - name: Crear ZIP del Módulo
         run: |
+          # Excluimos la carpeta de la App del ZIP del módulo para que no pese tanto
           zip -r "QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip" . \
-            -x "*.git*" ".github/*" "*.md" "*.yml" "*.yaml" "update.json"
+            -x "*.git*" ".github/*" "*.md" "*.yml" "*.yaml" "update.json" "QuickSwitch-App/*" "*.apk"
 
       - name: Guardar cambios (Commit & Push)
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
+          
+          # Añadimos los cambios del module.prop y json
           git add module.prop update.json
+          
+          # OJO: Si quieres que se guarde el cambio de versión de la app en el repo, descomenta esto:
+          # git add QuickSwitch-App/**/build.gradle
+          
           git commit -m "Auto-bump to ${{ steps.versioning.outputs.new_ver }} [skip ci]" || echo "No changes to commit"
           git push origin HEAD:anyfix/master
 
@@ -71,6 +127,9 @@ jobs:
           tag_name: ${{ steps.versioning.outputs.new_ver }}
           name: QuickSwitch ${{ steps.versioning.outputs.new_ver }}
           body_path: changelog.md
-          files: QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip
+          # Aquí subimos AMBOS archivos: el ZIP del módulo y el APK de la app
+          files: |
+            QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip
+            QuickSwitch-App-${{ steps.versioning.outputs.new_ver }}.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
