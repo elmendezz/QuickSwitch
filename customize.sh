@@ -62,11 +62,6 @@ else
   ln -s /data/adb/magisk/busybox $MODPATH/busybox
 fi
 
-
-########################################
-# APK INSTALL WITH AUTO RETRY SYSTEM  #
-########################################
-
 if [ -z "$NOAPK" ]; then
 
   ui_print "- Preparing QuickSwitch.apk"
