@@ -18,17 +18,16 @@ jobs:
       contents: write
 
     steps:
-      - name: 📥 Checkout del código
+      - name: 📥 Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: 'anyfix/master'
 
-      # --- 1. CÁLCULO DE VERSIÓN (Solo memoria, no escribe archivos aún) ---
-      - name: 🧮 Calcular Próxima Versión
+      # --- 1. CÁLCULO DE VERSIÓN (En memoria) ---
+      - name: 🧮 Calculate Next Version
         id: versioning
         run: |
-          # Leemos sin modificar nada todavía
           if [ -f current.txt ]; then
             OLD_CODE=$(cat current.txt | tr -dc '0-9')
           else
@@ -40,94 +39,99 @@ jobs:
           NEW_CODE=$((OLD_CODE + 1))
           NEW_VER="v${NEW_CODE}.0"
           
-          echo "🔹 Versión calculada para este build: $NEW_VER ($NEW_CODE)"
+          echo "🔹 Target Version: $NEW_VER ($NEW_CODE)"
           
-          # Solo exportamos variables, NO escribimos en current.txt todavía
           echo "new_ver=$NEW_VER" >> $GITHUB_OUTPUT
           echo "new_code=$NEW_CODE" >> $GITHUB_OUTPUT
 
-      # --- 2. CONFIGURACIÓN JAVA ---
-      - name: ☕ Configurar Java 17
+      # --- 2. PREPARACIÓN JAVA ---
+      - name: ☕ Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      # --- 3. APLICAR VERSIÓN A GRADLE Y COMPILAR ---
-      - name: 🔨 Compilar APK (Prueba de Fuego)
+      # --- 3. COMPILACIÓN (MODO RELEASE) ---
+      - name: 🔨 Build Release APK
         run: |
           VER_CODE="${{ steps.versioning.outputs.new_code }}"
           VER_NAME="${{ steps.versioning.outputs.new_ver }}"
           
-          echo "Aplicando versión $VER_NAME al código fuente..."
-          
           cd QuickSwitch-App
-          # Modificamos gradle para compilar
+          # Inyectamos versión
           find . -name "build.gradle.kts" -exec sed -i "s/versionCode\s*=\s*[0-9]\+/versionCode = $VER_CODE/" {} +
           find . -name "build.gradle.kts" -exec sed -i "s/versionName\s*=\s*\".*\"/versionName = \"$VER_NAME\"/" {} +
           
           chmod +x gradlew
-          
-          # SI ESTO FALLA, EL SCRIPT SE DETIENE AQUÍ.
-          # Como no hemos hecho commit ni updateado current.txt, la versión no se pierde.
-          ./gradlew assembleDebug --no-daemon
+          # Usamos assembleRelease en lugar de assembleDebug
+          ./gradlew assembleRelease --no-daemon
 
-      # --- 4. PREPARAR APKs (Si llegamos aquí, el build funcionó) ---
-      - name: 📦 Procesar APKs
+      # --- 4. FIRMA DEL APK (LA SOLUCIÓN A TU PROBLEMA) ---
+      - name: 🔐 Sign APK
+        id: sign_app
+        uses: r0adkll/sign-android-release@v1
+        with:
+          releaseDirectory: QuickSwitch-App/app/build/outputs/apk/release
+          signingKeyBase64: ${{ secrets.SIGNING_KEY }}
+          alias: ${{ secrets.ALIAS }}
+          keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD }}
+          keyPassword: ${{ secrets.KEY_PASSWORD }}
+        # Esta acción genera un output llamado 'signedReleaseFile'
+
+      # --- 5. PROCESAR ARCHIVOS (Usando el APK Firmado) ---
+      - name: 📦 Process Artifacts
         run: |
-          BUILT_APK=$(find QuickSwitch-App -name "*-debug.apk" | head -n 1)
+          # Obtenemos la ruta del APK YA FIRMADO desde el paso anterior
+          SIGNED_APK="${{ steps.sign_app.outputs.signedReleaseFile }}"
           
-          # 1. Copia renombrada para el Release
-          cp "$BUILT_APK" "./QuickSwitch-${{ steps.versioning.outputs.new_ver }}.apk"
+          echo "Processing Signed APK: $SIGNED_APK"
           
-          # 2. Copia fija para dentro del ZIP
-          cp "$BUILT_APK" ./QuickSwitch.apk
+          # 1. Copia renombrada para el Release (fuera del zip)
+          cp "$SIGNED_APK" "./QuickSwitch-${{ steps.versioning.outputs.new_ver }}.apk"
+          
+          # 2. Copia fija para dentro del ZIP (nombre genérico)
+          cp "$SIGNED_APK" ./QuickSwitch.apk
 
-      # --- 5. ACTUALIZAR ARCHIVOS DE VERSIÓN (Ahora es seguro escribir) ---
-      - name: 📝 Actualizar current.txt y module.prop
+      # --- 6. GUARDAR VERSIÓN (Solo si firma y build tuvieron éxito) ---
+      - name: 📝 Update Version Files
         run: |
           NEW_CODE="${{ steps.versioning.outputs.new_code }}"
           NEW_VER="${{ steps.versioning.outputs.new_ver }}"
           
-          # Ahora sí guardamos la versión oficialmente
           echo "$NEW_CODE" > current.txt
           
           sed -i "s/versionCode=.*/versionCode=$NEW_CODE/" module.prop
           sed -i "s/version=.*/version=$NEW_VER/" module.prop
 
-      # --- 6. CHANGELOG (Corregido error ENOENT) ---
-      - name: 📄 Generar Changelog
+      # --- 7. CHANGELOG (Solo Inglés, Sin 'Current') ---
+      - name: 📄 Generate Changelog
         run: |
           NEW_VER="${{ steps.versioning.outputs.new_ver }}"
           COMMIT_MSG=$(git log -1 --pretty=%B)
-          AUTHOR_NAME=$(git log -1 --pretty=%an)
           DIFF_STAT=$(git diff-tree --no-commit-id --stat -r HEAD)
           
-          # Crear el archivo temporal para esta release (new_entry.md)
-          echo "## $NEW_VER (🔴 Current / Actual)" > new_entry.md
-          echo "> **📅 Date:** $(date +'%Y-%m-%d') | **🤖 By:** $AUTHOR_NAME" >> new_entry.md
-          echo "" >> new_entry.md
-          echo "### 🇬🇧 English / 🇪🇸 Español Changes" >> new_entry.md
+          # Cabecera limpia
+          echo "## $NEW_VER" > new_entry.md
+          echo "**Changes:**" >> new_entry.md
           echo "$COMMIT_MSG" >> new_entry.md
           echo "" >> new_entry.md
-          echo "### 📊 File Stats (Diffs)" >> new_entry.md
+          echo "**File Stats:**" >> new_entry.md
           echo "\`\`\`diff" >> new_entry.md
           echo "$DIFF_STAT" >> new_entry.md
           echo "\`\`\`" >> new_entry.md
           echo "" >> new_entry.md
           echo "---" >> new_entry.md
           
-          # CORRECCIÓN: Concatenar sin borrar new_entry.md
+          # Concatenar historial
           if [ -f changelog.md ]; then
             cat new_entry.md changelog.md > temp_changelog.md
             mv temp_changelog.md changelog.md
           else
             cp new_entry.md changelog.md
           fi
-          # IMPORTANTE: NO borramos new_entry.md, lo necesitamos para el release step
 
-      # --- 7. UPDATE.JSON ---
-      - name: 🔄 Actualizar update.json
+      # --- 8. UPDATE.JSON ---
+      - name: 🔄 Update update.json
         run: |
           NEW_VER="${{ steps.versioning.outputs.new_ver }}"
           NEW_CODE="${{ steps.versioning.outputs.new_code }}"
@@ -143,15 +147,15 @@ jobs:
              '.version = $ver | .versionCode = ($code | tonumber) | .zipUrl = $url | .changelog = $log' \
              update.json > temp.json && mv temp.json update.json
 
-      # --- 8. CREAR ZIP ---
-      - name: 🤐 Crear ZIP Magisk
+      # --- 9. CREAR ZIP ---
+      - name: 🤐 Create Magisk ZIP
         run: |
           zip -r "QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip" . \
             -x "*.git*" ".github/*" "*.md" "*.yml" "*.yaml" "update.json" "current.txt" "QuickSwitch-App/*" \
             -x "QuickSwitch-*.apk" "new_entry.md" "temp.json"
 
-      # --- 9. GUARDAR CAMBIOS (COMMIT) ---
-      - name: 🤖 Commit y Push
+      # --- 10. COMMIT & PUSH ---
+      - name: 🤖 Commit Bump
         run: |
           git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
@@ -162,13 +166,13 @@ jobs:
           git commit -m "🤖 Bump version to ${{ steps.versioning.outputs.new_ver }} [skip ci]" || echo "No changes to commit"
           git push origin HEAD:anyfix/master
 
-      # --- 10. PUBLICAR RELEASE ---
-      - name: 🚀 Publicar Release
+      # --- 11. PUBLICAR RELEASE ---
+      - name: 🚀 Publish Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.versioning.outputs.new_ver }}
           name: QuickSwitch ${{ steps.versioning.outputs.new_ver }}
-          body_path: new_entry.md  # Ahora sí encontrará este archivo
+          body_path: new_entry.md
           files: |
             QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip
             QuickSwitch-${{ steps.versioning.outputs.new_ver }}.apk
