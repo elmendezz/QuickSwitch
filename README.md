@@ -20,6 +20,7 @@ Also, please do not report bugs in forked versions upstream.
 
 - Latest version of Magisk or KernelSU or Apatch  
 - Android 9+  
+- at least 15 MB of free space
 
 ## ⚠Warning⚠  
 This module operates the system using Root privileges.  
