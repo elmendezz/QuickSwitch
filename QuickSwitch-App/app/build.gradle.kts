@@ -11,8 +11,8 @@ android {
         applicationId = "com.elmendezz.qsre"
         minSdk = 24
         targetSdk = 36
-        versionCode = 17
-        versionName = "v17.0"
+        versionCode = 18
+        versionName = "v18.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
