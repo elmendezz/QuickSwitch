@@ -23,7 +23,6 @@ jobs:
         id: check_changes
         run: |
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "⚠️ Ejecución Manual: MODO TEST ACTIVO."
             echo "should_run=true" >> $GITHUB_OUTPUT
             echo "is_test=true" >> $GITHUB_OUTPUT
             exit 0
@@ -66,7 +65,17 @@ jobs:
         if: steps.check_changes.outputs.should_run == 'true'
         uses: android-actions/setup-android@v3
 
-      # --- 3. BUILD ULTRA RÁPIDO ---
+      # --- 2.1 CACHE (NUEVO) ---
+      - name: ⚡ Cache Gradle
+        if: steps.check_changes.outputs.should_run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+
+      # --- 3. BUILD ULTRA RÁPIDO (Con alternativa básica) ---
       - name: 🔨 Build Release APK
         if: steps.check_changes.outputs.should_run == 'true'
         run: |
@@ -74,15 +83,18 @@ jobs:
           VER_NAME="${{ steps.versioning.outputs.new_ver }}"
           cd QuickSwitch-App
           
-          # Inyectar versión
           find . -name "build.gradle.kts" -exec sed -i "s/versionCode\s*=\s*[0-9]\+/versionCode = $VER_CODE/" {} +
           find . -name "build.gradle.kts" -exec sed -i "s/versionName\s*=\s*\".*\"/versionName = \"$VER_NAME\"/" {} +
           chmod +x gradlew
           
-          # Build optimizado
-          ./gradlew assembleRelease --no-daemon --parallel --build-cache -x lint -x test
+          # Intento 1: Build Release Optimizado
+          echo "🚀 Intentando Build Release..."
+          if ! ./gradlew assembleRelease --no-daemon --parallel --build-cache -x lint -x test; then
+             echo "⚠️ Build Release falló. Intentando modo limpio (Fallback)..."
+             ./gradlew clean assembleRelease --no-daemon -x lint -x test
+          fi
 
-      # --- 4. FIRMA MANUAL (CORREGIDO: Desactivar V4 y borrar intermedios) ---
+      # --- 4. FIRMA MANUAL ---
       - name: 🔐 Sign APK Manually
         if: steps.check_changes.outputs.should_run == 'true'
         id: sign_app
@@ -101,22 +113,20 @@ jobs:
           # Alinear
           "$TOOLS_PATH/zipalign" -v -p 4 "$INPUT_APK" "$ALIGNED_APK"
           
-          # Firmar (Añadido --v4-signing-enabled false para evitar el .idsig)
+          # Firmar
           "$TOOLS_PATH/apksigner" sign --ks release.jks --ks-key-alias "${{ secrets.ALIAS }}" --ks-pass "pass:${{ secrets.KEY_STORE_PASSWORD }}" --key-pass "pass:${{ secrets.KEY_PASSWORD }}" --v4-signing-enabled false --out "$SIGNED_APK" "$ALIGNED_APK"
 
-          # Limpieza inmediata de archivos basura
-          rm "$ALIGNED_APK"
-          
+          rm -f "$ALIGNED_APK" "$INPUT_APK"
           echo "signed_apk_path=$SIGNED_APK" >> $GITHUB_OUTPUT
 
-      # --- 5. PROCESAR ---
+      # --- 5. PROCESAR ARTEFACTOS ---
       - name: 📦 Process Artifacts
         if: steps.check_changes.outputs.should_run == 'true'
         run: |
           SIGNED_APK="${{ steps.sign_app.outputs.signed_apk_path }}"
-          # Copia para el Release de GitHub (con versión)
+          # Copia para Github Release
           cp "$SIGNED_APK" "./QuickSwitch-${{ steps.versioning.outputs.new_ver }}.apk"
-          # Copia para dentro del ZIP del módulo (nombre fijo)
+          # Copia para dentro del ZIP
           cp "$SIGNED_APK" ./QuickSwitch.apk
 
       # --- 6. UPDATE FILES ---
@@ -129,35 +139,135 @@ jobs:
           sed -i "s/versionCode=.*/versionCode=$NEW_CODE/" module.prop
           sed -i "s/version=.*/version=$NEW_VER/" module.prop
 
-      # --- 7. METADATA & ZIP (CORREGIDO: Exclusiones más estrictas) ---
+            # --- 7. METADATA & ZIP (CORREGIDO) ---
       - name: 📄 Generate Metadata & Zip
         if: steps.check_changes.outputs.should_run == 'true'
         run: |
           NEW_VER="${{ steps.versioning.outputs.new_ver }}"
           NEW_CODE="${{ steps.versioning.outputs.new_code }}"
-          COMMIT_MSG=$(git log -1 --pretty=%B)
           
-          echo "## $NEW_VER" > new_entry.md
-          echo "**Changes:** $COMMIT_MSG" >> new_entry.md
-          echo "---" >> new_entry.md
+          # --- GENERACIÓN DE CHANGELOG ---
+          AUTHOR=$(git log -1 --pretty=format:'%an')
+          HASH=$(git rev-parse --short HEAD)
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          DIFF_STAT=$(git diff --stat HEAD^ HEAD)
+          
+          echo "## 🚀 $NEW_VER ($HASH)" > new_entry.md
+          echo "**👤 Author:** $AUTHOR" >> new_entry.md
+          echo "" >> new_entry.md
+          echo "### 📝 Changes" >> new_entry.md
+          echo "\`\`\`text" >> new_entry.md
+          echo "$COMMIT_MSG" >> new_entry.md
+          echo "\`\`\`" >> new_entry.md
+          echo "### 📊 Files Changed" >> new_entry.md
+          echo "\`\`\`diff" >> new_entry.md
+          echo "$DIFF_STAT" >> new_entry.md
+          echo "\`\`\`" >> new_entry.md
+          
+          # Combinar con histórico
           [ -f changelog.md ] && cat new_entry.md changelog.md > tmp && mv tmp changelog.md || cp new_entry.md changelog.md
 
+          # JSON Update
           ZIP_URL="https://github.com/${{ github.repository }}/releases/download/$NEW_VER/QuickSwitch-$NEW_VER.zip"
           CHANGELOG_URL="https://raw.githubusercontent.com/${{ github.repository }}/anyfix/master/changelog.md"
-          
           if [ ! -s update.json ]; then echo "{}" > update.json; fi
-
           jq --arg ver "$NEW_VER" --arg code "$NEW_CODE" --arg url "$ZIP_URL" --arg log "$CHANGELOG_URL" '.version = $ver | .versionCode = ($code | tonumber) | .zipUrl = $url | .changelog = $log' update.json > temp.json && mv temp.json update.json
 
-          # ZIP Optimizado: 
-          # 1. Incluye QuickSwitch.apk (el nombre corto)
-          # 2. Excluye el APK con versión (QuickSwitch-vX.apk)
-          # 3. Excluye firmas residuales (*.idsig) y APKs intermedios
-          zip -r "QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip" . \
-            -x "*.git*" ".github/*" "*.md" "*.yml" "update.json" "current.txt" "QuickSwitch-App/*" \
-            -x "QuickSwitch-v*.apk" "new_entry.md" "temp.json" "*.jks" "*.idsig" "app-release-*.apk"
+          # Limpieza
+          rm -f QuickSwitch-Signed.apk app-release-*.apk *.idsig
+          
+          # --- ZIP CON FALLBACK ROBUSTO ---
+          TARGET_ZIP="QuickSwitch-${NEW_VER}.zip"
+          echo "Comprimiendo..."
+          
+          # Intento 1: Sistema ZIP nativo
+          if zip -9 -r "$TARGET_ZIP" . -x "*.git*" ".github/*" "*.md" "*.yml" "update.json" "current.txt" "QuickSwitch-App/*" -x "QuickSwitch-v*.apk" "new_entry.md" "temp.json" "*.jks"; then
+            echo "✅ Zip creado exitosamente con herramienta nativa."
+          else
+            echo "⚠️ 'zip' falló. Usando Python Fallback..."
+            
+            # Crear script python temporal (Heredoc) para evitar errores de sintaxis YAML
+            cat <<EOF > zipper.py
+          import zipfile, os, fnmatch
+          
+          target = "$TARGET_ZIP"
+          # Patrones a excluir (formato glob)
+          exclude = ['*.git*', '.github/*', '*.md', '*.yml', 'update.json', 'current.txt', 'QuickSwitch-App/*', 'QuickSwitch-v*.apk', 'new_entry.md', 'temp.json', '*.jks', 'zipper.py']
+          
+          with zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED) as z:
+              for root, dirs, files in os.walk('.'):
+                  for file in files:
+                      path = os.path.join(root, file)
+                      rel_path = os.path.relpath(path, '.')
+                      
+                      # Check exclusion
+                      if rel_path == target: continue
+                      if any(fnmatch.fnmatch(rel_path, p) for p in exclude): continue
+                      if rel_path.startswith('.git'): continue
+                      
+                      z.write(path, arcname=rel_path)
+          EOF
+            
+            # Ejecutar y borrar script
+            python3 zipper.py
+            rm zipper.py
+            echo "✅ Zip creado con Python."
+          fi
 
-      # --- 8. COMMIT ---
+      # --- 8. SUBIDA A GOFILE (NUEVO) ---
+      - name: ☁️ Upload to GoFile
+        if: steps.check_changes.outputs.should_run == 'true'
+        id: gofile
+        run: |
+          NEW_VER="${{ steps.versioning.outputs.new_ver }}"
+          APK_FILE="QuickSwitch-${NEW_VER}.apk"
+          ZIP_FILE="QuickSwitch-${NEW_VER}.zip"
+          
+          echo "" >> new_entry.md
+          echo "## ☁️ Mirror Links (GoFile)" >> new_entry.md
+          
+          # Instalar jq si falta (normalmente ya está)
+          sudo apt-get install -y jq > /dev/null 2>&1
+          
+          # 1. Obtener Servidor
+          # Nota: GoFile a veces cambia su API. Se intenta obtener el mejor servidor.
+          SERVER=$(curl -s https://api.gofile.io/servers | jq -r '.data.servers[0].name')
+          
+          # Fallback si no devuelve servidor
+          if [ "$SERVER" == "null" ] || [ -z "$SERVER" ]; then SERVER="store1"; fi
+          
+          echo "Servidor GoFile seleccionado: $SERVER"
+
+          # Función para subir
+          upload_file() {
+            local file=$1
+            # Se usa el endpoint genérico si el específico del servidor falla, pero probamos el específico primero
+            local resp=$(curl -s -F "file=@$file" "https://${SERVER}.gofile.io/contents/uploadfile")
+            local link=$(echo $resp | jq -r '.data.downloadPage')
+            
+            if [ "$link" == "null" ] || [ -z "$link" ]; then
+                echo "Error subiendo $file: $resp"
+                echo "N/A"
+            else
+                echo "$link"
+            fi
+          }
+
+          # Subir APK
+          if [ -f "$APK_FILE" ]; then
+            echo "Subiendo APK ($APK_FILE)..."
+            LINK_APK=$(upload_file "$APK_FILE")
+            echo "- 📱 **APK Mirror:** [Descargar]($LINK_APK)" >> new_entry.md
+          fi
+
+          # Subir ZIP
+          if [ -f "$ZIP_FILE" ]; then
+            echo "Subiendo ZIP ($ZIP_FILE)..."
+            LINK_ZIP=$(upload_file "$ZIP_FILE")
+            echo "- 🤐 **ZIP Mirror:** [Descargar]($LINK_ZIP)" >> new_entry.md
+          fi
+
+      # --- 9. COMMIT ---
       - name: 🤖 Commit Bump
         if: steps.check_changes.outputs.should_run == 'true' && steps.check_changes.outputs.is_test == 'false'
         run: |
@@ -167,7 +277,7 @@ jobs:
           git commit -m "🤖 Bump version to ${{ steps.versioning.outputs.new_ver }} [skip ci]" || echo "No changes"
           git push origin HEAD:anyfix/master
 
-      # --- 9. RELEASE ---
+      # --- 10. RELEASE ---
       - name: 🚀 Publish Release
         if: steps.check_changes.outputs.should_run == 'true' && steps.check_changes.outputs.is_test == 'false'
         uses: softprops/action-gh-release@v1

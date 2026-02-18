@@ -17,7 +17,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.PowerSettingsNew
@@ -38,6 +37,7 @@ import androidx.core.graphics.drawable.toBitmap
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.elmendezz.qsre.ui.components.SingleCircleBackground
 import com.elmendezz.qsre.ui.theme.QuickSwitchRevivedTheme
+import com.elmendezz.qsre.ui.theme.ThemeConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -65,34 +65,12 @@ class MainActivity : ComponentActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        
+        val prefs = getSharedPreferences("qsre_prefs", Context.MODE_PRIVATE)
+        ThemeConfig.themeMode = prefs.getString("theme_mode", "system") ?: "system"
+
         setContent {
-            val context = LocalContext.current
-            val prefs = remember { context.getSharedPreferences("qsre_prefs", Context.MODE_PRIVATE) }
-            
-            var themeMode by remember { mutableStateOf(prefs.getString("theme_mode", "system") ?: "system") }
-            var appColor by remember { mutableIntStateOf(prefs.getInt("app_color", -1)) }
-
-            // Re-check preferences when returning to the activity
-            LaunchedEffect(Unit) {
-                // Simple way to refresh when activity is created/re-created
-            }
-
-            QuickSwitchRevivedTheme(themeMode = themeMode, appColor = appColor) {
-                MainScreen()
-            }
-        }
-    }
-
-    override fun onResume() {
-        super.onResume()
-        // Force recomposition to apply settings changed in SettingsActivity
-        setContent {
-            val context = LocalContext.current
-            val prefs = remember { context.getSharedPreferences("qsre_prefs", Context.MODE_PRIVATE) }
-            val themeMode = prefs.getString("theme_mode", "system") ?: "system"
-            val appColor = prefs.getInt("app_color", -1)
-            
-            QuickSwitchRevivedTheme(themeMode = themeMode, appColor = appColor) {
+            QuickSwitchRevivedTheme {
                 MainScreen()
             }
         }
@@ -113,7 +91,6 @@ fun MainScreen() {
     var autoReboot by remember { 
         mutableStateOf(prefs.getBoolean("auto_reboot", false)) 
     }
-    val infiniteIcon = prefs.getBoolean("infinite_icon", false)
     
     var moduleInfo by remember { 
         mutableStateOf(ModuleInfo(name = "QuickSwitch", version = "...", author = "...")) 
@@ -126,7 +103,6 @@ fun MainScreen() {
     var showOutputDialog by remember { mutableStateOf(false) }
     var showRebootDialog by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
-    var showPathDialog by remember { mutableStateOf(false) }
 
     val excludedPackages = setOf("com.android.settings", "com.google.android.settings")
 
@@ -287,10 +263,6 @@ fun MainScreen() {
                                 onClick = { executeReset(); showMenu = false }
                             )
                             DropdownMenuItem(
-                                text = { Text(stringResource(R.string.menu_change_path)) },
-                                onClick = { showPathDialog = true; showMenu = false }
-                            )
-                            DropdownMenuItem(
                                 text = { Text(stringResource(R.string.menu_set_default)) },
                                 onClick = { 
                                     try {
@@ -298,15 +270,6 @@ fun MainScreen() {
                                     } catch (e: Exception) {
                                         context.startActivity(Intent(Settings.ACTION_SETTINGS))
                                     }
-                                    showMenu = false 
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.menu_about)) },
-                                onClick = { 
-                                    val intent = Intent(context, AboutMeActivity::class.java)
-                                    intent.putExtra("installed_version", moduleInfo.version)
-                                    context.startActivity(intent)
                                     showMenu = false 
                                 }
                             )
@@ -329,7 +292,7 @@ fun MainScreen() {
 
                 LazyColumn(modifier = Modifier.fillMaxSize()) {
                     item {
-                        ModuleInfoCard(moduleInfo, infiniteIcon)
+                        ModuleInfoCard(moduleInfo)
                     }
 
                     if (inUse.isNotEmpty()) {
@@ -394,28 +357,11 @@ fun MainScreen() {
                 dismissButton = { TextButton(onClick = { showRebootDialog = false }) { Text(stringResource(R.string.dialog_reboot_later)) } }
             )
         }
-
-        if (showPathDialog) {
-            var tempPath by remember { mutableStateOf(quickswitchPath) }
-            AlertDialog(
-                onDismissRequest = { showPathDialog = false },
-                title = { Text(stringResource(R.string.dialog_path_title)) },
-                text = { TextField(value = tempPath, onValueChange = { tempPath = it }) },
-                confirmButton = {
-                    Button(onClick = { 
-                        quickswitchPath = tempPath
-                        prefs.edit().putString("quickswitch_path", quickswitchPath).apply()
-                        showPathDialog = false
-                        refreshLaunchers() 
-                    }) { Text(stringResource(R.string.dialog_save)) }
-                }
-            )
-        }
     }
 }
 
 @Composable
-fun ModuleInfoCard(info: ModuleInfo, useInfiniteIcon: Boolean) {
+fun ModuleInfoCard(info: ModuleInfo) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -424,12 +370,6 @@ fun ModuleInfoCard(info: ModuleInfo, useInfiniteIcon: Boolean) {
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (useInfiniteIcon) {
-                    Icon(Icons.Default.Refresh, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                } else {
-                    Icon(painter = painterResource(R.drawable.ic_view_carousel), contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
-                }
-                Spacer(Modifier.width(8.dp))
                 Text(text = info.name.ifEmpty { stringResource(R.string.unknown) }, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             }
             Text(text = stringResource(R.string.module_version, info.version.ifEmpty { stringResource(R.string.unknown_desc) }), style = MaterialTheme.typography.bodyMedium)

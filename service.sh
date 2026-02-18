@@ -9,3 +9,4 @@
     # avoid breaking OnePlus display modes/fingerprint scanners
     resetprop vendor.boot.verifiedbootstate green
 }&
+# new props coming

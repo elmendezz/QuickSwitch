@@ -1,59 +1,39 @@
 package com.elmendezz.qsre
 
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.elmendezz.qsre.ui.components.SingleCircleBackground
 import com.elmendezz.qsre.ui.theme.QuickSwitchRevivedTheme
+import com.elmendezz.qsre.ui.theme.ThemeConfig
 
 class SettingsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            val context = LocalContext.current
-            val prefs = remember { context.getSharedPreferences("qsre_prefs", Context.MODE_PRIVATE) }
-            
-            var themeMode by remember { mutableStateOf(prefs.getString("theme_mode", "system") ?: "system") }
-            var appColor by remember { mutableIntStateOf(prefs.getInt("app_color", -1)) }
-            var infiniteIcon by remember { mutableStateOf(prefs.getBoolean("infinite_icon", false)) }
-            
-            QuickSwitchRevivedTheme(themeMode = themeMode, appColor = appColor) {
+            QuickSwitchRevivedTheme {
                 SettingsScreen(
-                    themeMode = themeMode,
-                    appColor = appColor,
-                    infiniteIcon = infiniteIcon,
-                    onThemeChange = { 
-                        themeMode = it
-                        prefs.edit().putString("theme_mode", it).apply()
-                    },
-                    onColorChange = {
-                        appColor = it
-                        prefs.edit().putInt("app_color", it).apply()
-                    },
-                    onInfiniteIconChange = {
-                        infiniteIcon = it
-                        prefs.edit().putBoolean("infinite_icon", it).apply()
-                    },
                     onBack = { finish() }
                 )
             }
@@ -64,14 +44,17 @@ class SettingsActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    themeMode: String,
-    appColor: Int,
-    infiniteIcon: Boolean,
-    onThemeChange: (String) -> Unit,
-    onColorChange: (Int) -> Unit,
-    onInfiniteIconChange: (Boolean) -> Unit,
     onBack: () -> Unit
 ) {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("qsre_prefs", Context.MODE_PRIVATE) }
+    val themeMode = ThemeConfig.themeMode
+    
+    var showPathDialog by remember { mutableStateOf(false) }
+    var quickswitchPath by remember { 
+        mutableStateOf(prefs.getString("quickswitch_path", "/data/adb/modules/quickswitch/quickswitch") ?: "/data/adb/modules/quickswitch/quickswitch") 
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -96,40 +79,120 @@ fun SettingsScreen(
                     .verticalScroll(rememberScrollState())
                     .fillMaxSize()
             ) {
-                Text(stringResource(R.string.setting_theme), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(selected = themeMode == "system", onClick = { onThemeChange("system") })
-                    Text(stringResource(R.string.theme_system))
-                    Spacer(Modifier.width(8.dp))
-                    RadioButton(selected = themeMode == "light", onClick = { onThemeChange("light") })
-                    Text(stringResource(R.string.theme_light))
-                    Spacer(Modifier.width(8.dp))
-                    RadioButton(selected = themeMode == "dark", onClick = { onThemeChange("dark") })
-                    Text(stringResource(R.string.theme_dark))
+                // Theme Section
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(stringResource(R.string.setting_theme), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(
+                                selected = themeMode == "system", 
+                                onClick = { 
+                                    ThemeConfig.themeMode = "system"
+                                    prefs.edit().putString("theme_mode", "system").apply()
+                                }
+                            )
+                            Text(stringResource(R.string.theme_system))
+                            Spacer(Modifier.width(8.dp))
+                            RadioButton(
+                                selected = themeMode == "light", 
+                                onClick = { 
+                                    ThemeConfig.themeMode = "light"
+                                    prefs.edit().putString("theme_mode", "light").apply()
+                                }
+                            )
+                            Text(stringResource(R.string.theme_light))
+                            Spacer(Modifier.width(8.dp))
+                            RadioButton(
+                                selected = themeMode == "dark", 
+                                onClick = { 
+                                    ThemeConfig.themeMode = "dark"
+                                    prefs.edit().putString("theme_mode", "dark").apply()
+                                }
+                            )
+                            Text(stringResource(R.string.theme_dark))
+                        }
+                    }
                 }
+
+                Spacer(Modifier.height(16.dp))
                 
-                Spacer(Modifier.height(24.dp))
-                Text(stringResource(R.string.setting_color), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-                Row(modifier = Modifier.padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val colors = listOf(Color.Red, Color.Green, Color.Blue, Color.Yellow, Color.Magenta, Color.Cyan)
-                    colors.forEach { color ->
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .background(color, CircleShape)
-                                .clickable { onColorChange(color.toArgb()) }
+                // Advanced Section
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                ) {
+                    Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                        Text(
+                            "Avanzado", 
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            style = MaterialTheme.typography.titleMedium, 
+                            color = MaterialTheme.colorScheme.primary, 
+                            fontWeight = FontWeight.Bold
+                        )
+                        ListItem(
+                            headlineContent = { Text(stringResource(R.string.menu_change_path)) },
+                            supportingContent = { Text(quickswitchPath) },
+                            leadingContent = { Icon(Icons.Default.Edit, contentDescription = null) },
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            modifier = Modifier.clickable { showPathDialog = true }
                         )
                     }
                 }
-                TextButton(onClick = { onColorChange(-1) }) { Text("Reset color (Material You)") }
                 
-                Spacer(Modifier.height(24.dp))
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { onInfiniteIconChange(!infiniteIcon) }) {
-                    Checkbox(checked = infiniteIcon, onCheckedChange = { onInfiniteIconChange(it) })
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.setting_icon_infinite))
+                Spacer(Modifier.height(16.dp))
+
+                // About Section
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                ) {
+                    Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                        Text(
+                            "Información", 
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            style = MaterialTheme.typography.titleMedium, 
+                            color = MaterialTheme.colorScheme.primary, 
+                            fontWeight = FontWeight.Bold
+                        )
+                        ListItem(
+                            headlineContent = { Text(stringResource(R.string.menu_about)) },
+                            leadingContent = { Icon(Icons.Default.Info, contentDescription = null) },
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            modifier = Modifier.clickable { 
+                                context.startActivity(Intent(context, AboutMeActivity::class.java))
+                            }
+                        )
+                    }
                 }
             }
+        }
+
+        if (showPathDialog) {
+            var tempPath by remember { mutableStateOf(quickswitchPath) }
+            AlertDialog(
+                onDismissRequest = { showPathDialog = false },
+                title = { Text(stringResource(R.string.dialog_path_title)) },
+                text = { 
+                    TextField(
+                        value = tempPath, 
+                        onValueChange = { tempPath = it },
+                        modifier = Modifier.fillMaxWidth()
+                    ) 
+                },
+                confirmButton = {
+                    Button(onClick = { 
+                        quickswitchPath = tempPath
+                        prefs.edit().putString("quickswitch_path", quickswitchPath).apply()
+                        showPathDialog = false
+                    }) { Text(stringResource(R.string.dialog_save)) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showPathDialog = false }) { Text("Cancelar") }
+                }
+            )
         }
     }
 }

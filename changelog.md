@@ -1,3 +1,21 @@
+## 🚀 v20.0 (917cb51)
+**👤 Author:** elmendezz
+
+### 📝 Changes
+```text
+update customize.sh
+```
+### 📊 Files Changed
+```diff
+ customize.sh | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+```
+## v19.0
+**Changes:** Delete QuickSwitch-App/app/release/app-release.apk
+---
+## v18.0
+**Changes:** update customize.sh
+---
 ## v17.0
 **Changes:** update customize.sh
 ---
