@@ -1,0 +1,191 @@
+name: Build and Release Android & Magisk
+
+on:
+  push:
+    branches:
+      - 'anyfix/master'
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # --- 0. DETECTOR DE CAMBIOS ---
+      - name: 🕵️ Check for relevant changes
+        id: check_changes
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "⚠️ Ejecución Manual: MODO TEST ACTIVO."
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            echo "is_test=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          IGNORE_PATTERN="README.md|changelog.md|update.json|module.prop|current.txt|.github/.*|.*\.yml"
+          CHANGED_FILES=$(git diff --name-only HEAD^ HEAD)
+          NON_IGNORED=$(echo "$CHANGED_FILES" | grep -vE "$IGNORE_PATTERN" || true)
+
+          if [ -z "$NON_IGNORED" ]; then
+            echo "should_run=false" >> $GITHUB_OUTPUT
+            echo "is_test=false" >> $GITHUB_OUTPUT
+          else
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            echo "is_test=false" >> $GITHUB_OUTPUT
+          fi
+
+      # --- 1. CÁLCULO DE VERSIÓN ---
+      - name: 🧮 Calculate Next Version
+        if: steps.check_changes.outputs.should_run == 'true'
+        id: versioning
+        run: |
+          if [ -f current.txt ]; then OLD_CODE=$(cat current.txt | tr -dc '0-9'); else OLD_CODE=$(grep 'versionCode=' module.prop | cut -d= -f2 || echo "0"); fi
+          if [ -z "$OLD_CODE" ] || [ "$OLD_CODE" -eq 0 ]; then OLD_CODE=1; fi
+          NEW_CODE=$((OLD_CODE + 1))
+          NEW_VER="v${NEW_CODE}.0"
+          echo "new_ver=$NEW_VER" >> $GITHUB_OUTPUT
+          echo "new_code=$NEW_CODE" >> $GITHUB_OUTPUT
+
+      # --- 2. SETUP JAVA & ANDROID ---
+      - name: ☕ Setup Java 17
+        if: steps.check_changes.outputs.should_run == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: ⚙️ Setup Android SDK
+        if: steps.check_changes.outputs.should_run == 'true'
+        uses: android-actions/setup-android@v3
+
+      # --- 3. BUILD ---
+      - name: 🔨 Build Release APK
+        if: steps.check_changes.outputs.should_run == 'true'
+        run: |
+          VER_CODE="${{ steps.versioning.outputs.new_code }}"
+          VER_NAME="${{ steps.versioning.outputs.new_ver }}"
+          cd QuickSwitch-App
+          find . -name "build.gradle.kts" -exec sed -i "s/versionCode\s*=\s*[0-9]\+/versionCode = $VER_CODE/" {} +
+          find . -name "build.gradle.kts" -exec sed -i "s/versionName\s*=\s*\".*\"/versionName = \"$VER_NAME\"/" {} +
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+
+      # --- 4. FIRMA MANUAL (SIN ACCIONES EXTERNAS) ---
+      # Esto reemplaza a ilharp/r0adkll. Usamos las herramientas nativas.
+      - name: 🔐 Sign APK Manually
+        if: steps.check_changes.outputs.should_run == 'true'
+        id: sign_app
+        run: |
+          # 1. Decodificar la Keystore desde Secrets
+          echo "${{ secrets.SIGNING_KEY }}" | base64 -d > release.jks
+
+          # 2. Encontrar las herramientas de compilación más recientes
+          BUILD_TOOLS_VER=$(ls $ANDROID_SDK_ROOT/build-tools/ | sort -r | head -n 1)
+          TOOLS_PATH="$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS_VER"
+          echo "Using Build Tools: $TOOLS_PATH"
+
+          # 3. Definir rutas
+          INPUT_APK="QuickSwitch-App/app/build/outputs/apk/release/app-release-unsigned.apk"
+          ALIGNED_APK="app-release-aligned.apk"
+          SIGNED_APK="QuickSwitch-Signed.apk"
+
+          # Si el archivo unsigned no existe, buscamos app-release.apk (a veces gradle lo nombra así)
+          if [ ! -f "$INPUT_APK" ]; then
+             INPUT_APK="QuickSwitch-App/app/build/outputs/apk/release/app-release.apk"
+          fi
+
+          echo "Signing file: $INPUT_APK"
+
+          # 4. Zipalign (Optimización necesaria antes de firmar)
+          "$TOOLS_PATH/zipalign" -v -p 4 "$INPUT_APK" "$ALIGNED_APK"
+
+          # 5. Firmar con apksigner
+          "$TOOLS_PATH/apksigner" sign \
+            --ks release.jks \
+            --ks-key-alias "${{ secrets.ALIAS }}" \
+            --ks-pass "pass:${{ secrets.KEY_STORE_PASSWORD }}" \
+            --key-pass "pass:${{ secrets.KEY_PASSWORD }}" \
+            --out "$SIGNED_APK" \
+            "$ALIGNED_APK"
+
+          # 6. Output para el siguiente paso
+          echo "signed_apk_path=$SIGNED_APK" >> $GITHUB_OUTPUT
+
+      # --- 5. PROCESAR ---
+      - name: 📦 Process Artifacts
+        if: steps.check_changes.outputs.should_run == 'true'
+        run: |
+          # Recuperamos la ruta del paso manual
+          SIGNED_APK="${{ steps.sign_app.outputs.signed_apk_path }}"
+          
+          cp "$SIGNED_APK" "./QuickSwitch-${{ steps.versioning.outputs.new_ver }}.apk"
+          cp "$SIGNED_APK" ./QuickSwitch.apk
+
+      # --- 6. UPDATE FILES ---
+      - name: 📝 Update Version Files
+        if: steps.check_changes.outputs.should_run == 'true'
+        run: |
+          NEW_CODE="${{ steps.versioning.outputs.new_code }}"
+          NEW_VER="${{ steps.versioning.outputs.new_ver }}"
+          echo "$NEW_CODE" > current.txt
+          sed -i "s/versionCode=.*/versionCode=$NEW_CODE/" module.prop
+          sed -i "s/version=.*/version=$NEW_VER/" module.prop
+
+      # --- 7. CHANGELOG & JSON & ZIP ---
+      - name: 📄 Generate Metadata & Zip
+        if: steps.check_changes.outputs.should_run == 'true'
+        run: |
+          # Changelog
+          NEW_VER="${{ steps.versioning.outputs.new_ver }}"
+          NEW_CODE="${{ steps.versioning.outputs.new_code }}"
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          
+          echo "## $NEW_VER" > new_entry.md
+          echo "**Changes:** $COMMIT_MSG" >> new_entry.md
+          echo "---" >> new_entry.md
+          [ -f changelog.md ] && cat new_entry.md changelog.md > tmp && mv tmp changelog.md || cp new_entry.md changelog.md
+
+          # Update JSON
+          ZIP_URL="https://github.com/${{ github.repository }}/releases/download/$NEW_VER/QuickSwitch-$NEW_VER.zip"
+          CHANGELOG_URL="https://raw.githubusercontent.com/${{ github.repository }}/anyfix/master/changelog.md"
+          [ ! -s update.json ] && echo "{}" > update.json
+          jq --arg ver "$NEW_VER" --arg code "$NEW_CODE" --arg url "$ZIP_URL" --arg log "$CHANGELOG_URL" \
+             '.version = $ver | .versionCode = ($code | tonumber) | .zipUrl = $url | .changelog = $log' \
+             update.json > temp.json && mv temp.json update.json
+
+          # ZIP
+          zip -r "QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip" . \
+            -x "*.git*" ".github/*" "*.md" "*.yml" "update.json" "current.txt" "QuickSwitch-App/*" \
+            -x "QuickSwitch-*.apk" "new_entry.md" "temp.json" "*.jks"
+
+      # --- 8. COMMIT ---
+      - name: 🤖 Commit Bump
+        if: steps.check_changes.outputs.should_run == 'true' && steps.check_changes.outputs.is_test == 'false'
+        run: |
+          git config --local user.email "bot@noreply.github.com"
+          git config --local user.name "github-actions"
+          git add module.prop update.json changelog.md current.txt QuickSwitch-App/**/build.gradle.kts
+          git commit -m "🤖 Bump version to ${{ steps.versioning.outputs.new_ver }} [skip ci]" || echo "No changes"
+          git push origin HEAD:anyfix/master
+
+      # --- 9. RELEASE ---
+      - name: 🚀 Publish Release
+        if: steps.check_changes.outputs.should_run == 'true' && steps.check_changes.outputs.is_test == 'false'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.versioning.outputs.new_ver }}
+          name: QuickSwitch ${{ steps.versioning.outputs.new_ver }}
+          body_path: new_entry.md
+          files: |
+            QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip
+            QuickSwitch-${{ steps.versioning.outputs.new_ver }}.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
