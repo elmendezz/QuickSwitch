@@ -53,3 +53,5 @@ or
 
 ## Support:
 If you encounter any problems, you may find some hints in the [GitHub Issues](https://github.com/elmendezz/QuickSwitch/issues) or [Telegram Group](https://t.me/QuickstepSwitcherSupport).  
+
+# A big thank you to [j7b3y](https://github.com/j7b3y) and its [fork of QuickSwitch](https://github.com/j7b3y/QuickSwitch)
