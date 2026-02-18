@@ -4,12 +4,8 @@ on:
   push:
     branches:
       - 'anyfix/master'
-    paths-ignore:
-      - 'README.md'
-      - 'changelog.md'
-      - 'update.json'
-      - 'module.prop'
-      - 'current.txt' 
+  # Permite ejecución manual (Modo Test)
+  workflow_dispatch:
 
 jobs:
   build-and-release:
@@ -21,11 +17,42 @@ jobs:
       - name: 📥 Checkout Code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-          ref: 'anyfix/master'
+          fetch-depth: 0 # Necesario para calcular versión y ver diffs
 
-      # --- 1. CÁLCULO DE VERSIÓN (En memoria) ---
+      # --- 0. DETECTOR DE CAMBIOS (Lógica Personalizada) ---
+      - name: 🕵️ Check for relevant changes
+        id: check_changes
+        run: |
+          # Si es manual, forzamos la ejecución en modo TEST
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "⚠️ Ejecución Manual Detectada: MODO TEST ACTIVO."
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            echo "is_test=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Lista de archivos a ignorar (Regex)
+          IGNORE_PATTERN="README.md|changelog.md|update.json|module.prop|current.txt"
+          
+          # Ver cambios en el último commit
+          CHANGED_FILES=$(git diff --name-only HEAD^ HEAD)
+          
+          # Filtramos los cambios que NO sean los ignorados
+          NON_IGNORED=$(echo "$CHANGED_FILES" | grep -vE "$IGNORE_PATTERN" || true)
+
+          if [ -z "$NON_IGNORED" ]; then
+            echo "🛑 Workflow evitado. Razón: Ningún cambio en código fuente, solo documentación."
+            echo "should_run=false" >> $GITHUB_OUTPUT
+            echo "is_test=false" >> $GITHUB_OUTPUT
+          else
+            echo "✅ Cambios de código detectados. Procediendo con el Build."
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            echo "is_test=false" >> $GITHUB_OUTPUT
+          fi
+
+      # --- 1. CÁLCULO DE VERSIÓN (Solo si hay cambios) ---
       - name: 🧮 Calculate Next Version
+        if: steps.check_changes.outputs.should_run == 'true'
         id: versioning
         run: |
           if [ -f current.txt ]; then
@@ -46,71 +73,69 @@ jobs:
 
       # --- 2. PREPARACIÓN JAVA ---
       - name: ☕ Setup Java 17
+        if: steps.check_changes.outputs.should_run == 'true'
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      # --- 3. COMPILACIÓN (MODO RELEASE) ---
+      # --- 3. COMPILACIÓN ---
       - name: 🔨 Build Release APK
+        if: steps.check_changes.outputs.should_run == 'true'
         run: |
           VER_CODE="${{ steps.versioning.outputs.new_code }}"
           VER_NAME="${{ steps.versioning.outputs.new_ver }}"
           
           cd QuickSwitch-App
-          # Inyectamos versión
           find . -name "build.gradle.kts" -exec sed -i "s/versionCode\s*=\s*[0-9]\+/versionCode = $VER_CODE/" {} +
           find . -name "build.gradle.kts" -exec sed -i "s/versionName\s*=\s*\".*\"/versionName = \"$VER_NAME\"/" {} +
           
           chmod +x gradlew
-          # Usamos assembleRelease en lugar de assembleDebug
           ./gradlew assembleRelease --no-daemon
 
-      # --- 4. FIRMA DEL APK (LA SOLUCIÓN A TU PROBLEMA) ---
+      # --- 4. FIRMA DEL APK (CORREGIDO: Usando ilharp en vez de r0adkll) ---
       - name: 🔐 Sign APK
+        if: steps.check_changes.outputs.should_run == 'true'
         id: sign_app
-        uses: r0adkll/sign-android-release@v1
+        # Usamos ilharp porque arregla el error de "zipalign not found" automáticamente
+        uses: ilharp/sign-android-release@v1
         with:
           releaseDirectory: QuickSwitch-App/app/build/outputs/apk/release
           signingKeyBase64: ${{ secrets.SIGNING_KEY }}
           alias: ${{ secrets.ALIAS }}
           keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD }}
           keyPassword: ${{ secrets.KEY_PASSWORD }}
-        # Esta acción genera un output llamado 'signedReleaseFile'
 
-      # --- 5. PROCESAR ARCHIVOS (Usando el APK Firmado) ---
+      # --- 5. PROCESAR ARCHIVOS ---
       - name: 📦 Process Artifacts
+        if: steps.check_changes.outputs.should_run == 'true'
         run: |
-          # Obtenemos la ruta del APK YA FIRMADO desde el paso anterior
           SIGNED_APK="${{ steps.sign_app.outputs.signedReleaseFile }}"
-          
           echo "Processing Signed APK: $SIGNED_APK"
           
-          # 1. Copia renombrada para el Release (fuera del zip)
+          # Copia para Release y para el ZIP interno
           cp "$SIGNED_APK" "./QuickSwitch-${{ steps.versioning.outputs.new_ver }}.apk"
-          
-          # 2. Copia fija para dentro del ZIP (nombre genérico)
           cp "$SIGNED_APK" ./QuickSwitch.apk
 
-      # --- 6. GUARDAR VERSIÓN (Solo si firma y build tuvieron éxito) ---
+      # --- 6. ACTUALIZAR ARCHIVOS DE VERSIÓN ---
       - name: 📝 Update Version Files
+        if: steps.check_changes.outputs.should_run == 'true'
         run: |
           NEW_CODE="${{ steps.versioning.outputs.new_code }}"
           NEW_VER="${{ steps.versioning.outputs.new_ver }}"
           
           echo "$NEW_CODE" > current.txt
-          
           sed -i "s/versionCode=.*/versionCode=$NEW_CODE/" module.prop
           sed -i "s/version=.*/version=$NEW_VER/" module.prop
 
-      # --- 7. CHANGELOG (Solo Inglés, Sin 'Current') ---
+      # --- 7. CHANGELOG ---
       - name: 📄 Generate Changelog
+        if: steps.check_changes.outputs.should_run == 'true'
         run: |
           NEW_VER="${{ steps.versioning.outputs.new_ver }}"
           COMMIT_MSG=$(git log -1 --pretty=%B)
           DIFF_STAT=$(git diff-tree --no-commit-id --stat -r HEAD)
           
-          # Cabecera limpia
           echo "## $NEW_VER" > new_entry.md
           echo "**Changes:**" >> new_entry.md
           echo "$COMMIT_MSG" >> new_entry.md
@@ -122,7 +147,6 @@ jobs:
           echo "" >> new_entry.md
           echo "---" >> new_entry.md
           
-          # Concatenar historial
           if [ -f changelog.md ]; then
             cat new_entry.md changelog.md > temp_changelog.md
             mv temp_changelog.md changelog.md
@@ -132,6 +156,7 @@ jobs:
 
       # --- 8. UPDATE.JSON ---
       - name: 🔄 Update update.json
+        if: steps.check_changes.outputs.should_run == 'true'
         run: |
           NEW_VER="${{ steps.versioning.outputs.new_ver }}"
           NEW_CODE="${{ steps.versioning.outputs.new_code }}"
@@ -147,15 +172,17 @@ jobs:
              '.version = $ver | .versionCode = ($code | tonumber) | .zipUrl = $url | .changelog = $log' \
              update.json > temp.json && mv temp.json update.json
 
-      # --- 9. CREAR ZIP ---
+      # --- 9. CREAR ZIP MAGISK ---
       - name: 🤐 Create Magisk ZIP
+        if: steps.check_changes.outputs.should_run == 'true'
         run: |
           zip -r "QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip" . \
             -x "*.git*" ".github/*" "*.md" "*.yml" "*.yaml" "update.json" "current.txt" "QuickSwitch-App/*" \
             -x "QuickSwitch-*.apk" "new_entry.md" "temp.json"
 
-      # --- 10. COMMIT & PUSH ---
+      # --- 10. COMMIT & PUSH (Bloqueado si es Manual/Test) ---
       - name: 🤖 Commit Bump
+        if: steps.check_changes.outputs.should_run == 'true' && steps.check_changes.outputs.is_test == 'false'
         run: |
           git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
@@ -166,8 +193,9 @@ jobs:
           git commit -m "🤖 Bump version to ${{ steps.versioning.outputs.new_ver }} [skip ci]" || echo "No changes to commit"
           git push origin HEAD:anyfix/master
 
-      # --- 11. PUBLICAR RELEASE ---
+      # --- 11. PUBLICAR RELEASE (Bloqueado si es Manual/Test) ---
       - name: 🚀 Publish Release
+        if: steps.check_changes.outputs.should_run == 'true' && steps.check_changes.outputs.is_test == 'false'
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.versioning.outputs.new_ver }}
@@ -178,3 +206,11 @@ jobs:
             QuickSwitch-${{ steps.versioning.outputs.new_ver }}.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # --- 12. MENSAJE FINAL (Solo para logs) ---
+      - name: 🏁 Final Summary
+        if: always()
+        run: |
+          echo "Workflow Status:"
+          echo "Run Executed: ${{ steps.check_changes.outputs.should_run }}"
+          echo "Test Mode: ${{ steps.check_changes.outputs.is_test }}"
