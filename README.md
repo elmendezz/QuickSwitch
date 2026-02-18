@@ -1,3 +1,10 @@
+# What are the differences in this fork?
+- QuickSwitch replaced with an useful app
+- No more slow web UI's! (You used to have to click on your web UI app, then on launchers, and then set them up.)
+- Easy-to-use app: click on your preferred launcher and you're done
+- You can see the logs!
+- lightweight app
+
 # QuickSwitch fork  
 
 This is a fork of QuickSwitch.  
