@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       version_input:
-        description: 'Versión (ej: 190 = 19.0 / 192 = 19.2)'
+        description: 'Versión de 2 dígitos (Ej: 20 = v2.0, 21 = v2.1)'
         required: true
-        default: '190'
+        default: '20'
 
 jobs:
   build-and-release:
@@ -23,22 +23,23 @@ jobs:
         with:
           fetch-depth: 0
 
-      # --- 1. CÁLCULO DE VERSIÓN (ARITMÉTICA PURA) ---
+      # --- 1. CÁLCULO DE VERSIÓN (LÓGICA 2 DÍGITOS) ---
       - name: 🧮 Calculate Version
         id: versioning
         run: |
-          # 1. Obtener número crudo (Input o current.txt + 1)
+          # 1. Obtener número (Input manual o auto-incremento desde archivo)
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             RAW="${{ inputs.version_input }}"
           else
-            [ -f current.txt ] && CUR=$(cat current.txt) || CUR=100
+            # Si es push automático, lee current.txt (ej: 19) y suma 1 -> 20
+            [ -f current.txt ] && CUR=$(cat current.txt) || CUR=10
             RAW=$((CUR + 1))
           fi
 
-          # 2. Matemática segura (Ej: 192)
-          # Mayor = 192 / 10 = 19
+          # 2. Matemática para 2 dígitos (Ej: 20 -> v2.0)
+          # Mayor: División por 10 (20 / 10 = 2)
           MAJOR=$((RAW / 10))
-          # Menor = 192 % 10 = 2
+          # Menor: Resto de 10 (20 % 10 = 0)
           MINOR=$((RAW % 10))
           
           FINAL_VER="v${MAJOR}.${MINOR}"
@@ -60,30 +61,35 @@ jobs:
       - name: ⚙️ Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      # --- 3. BUILD (FIX: SED SEGURO) ---
+      # --- 3. BUILD (PROTEGIDO CONTRA ERRORES DE SINTAXIS) ---
       - name: 🔨 Build Release APK
         run: |
           VER_CODE="${{ steps.versioning.outputs.new_code }}"
           VER_NAME="${{ steps.versioning.outputs.new_ver }}"
           
-          # SAFETY CHECK: Si las variables están vacías, fallar antes de romper el archivo
+          # SAFETY CHECK: Si las variables están vacías, abortar antes de dañar el gradle
           if [ -z "$VER_CODE" ] || [ -z "$VER_NAME" ]; then
-            echo "❌ Error: Variables de versión vacías."
+            echo "❌ Error Crítico: Variables de versión vacías."
             exit 1
           fi
 
           cd QuickSwitch-App
           chmod +x gradlew
           
-          # Inyección precisa
-          # Reemplaza 'versionCode = X' por 'versionCode = NUEVO'
+          # Inyección precisa usando variables verificadas
+          echo "🔧 Inyectando: Code=$VER_CODE, Name=$VER_NAME"
+          
           find . -name "build.gradle.kts" -exec sed -i "s/versionCode\s*=\s*[0-9]*/versionCode = $VER_CODE/" {} +
-          # Reemplaza 'versionName = "X"' por 'versionName = "NUEVO"'
           find . -name "build.gradle.kts" -exec sed -i "s/versionName\s*=\s*\".*\"/versionName = \"$VER_NAME\"/" {} +
           
-          echo "🚀 Building Release..."
-          # Usamos tu comando de build original (sin inventos raros)
-          ./gradlew assembleRelease --no-daemon --parallel --build-cache -x lint -x test
+          echo "🚀 Iniciando Build..."
+          # Intento 1: Build Rápido
+          if ./gradlew assembleRelease --no-daemon --parallel --build-cache -x lint -x test; then
+             echo "✅ Build Rápido Exitoso"
+          else
+             echo "⚠️ Build Rápido falló. Reintentando Build Limpio (Fallback)..."
+             ./gradlew clean assembleRelease --no-daemon --stacktrace
+          fi
 
       # --- 4. FIRMAR APK ---
       - name: 🔐 Sign APK Manually
@@ -94,11 +100,11 @@ jobs:
           BUILD_TOOLS_VER=$(ls $ANDROID_SDK_ROOT/build-tools/ | sort -r | head -n 1)
           TOOLS_PATH="$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS_VER"
           
-          # Buscamos el APK generado (puede variar si es unsigned o no)
+          # Buscar APK generado (maneja posibles variaciones de nombre)
           INPUT_APK=$(find QuickSwitch-App/app/build/outputs/apk/release -name "*.apk" | head -n 1)
           
           if [ -z "$INPUT_APK" ]; then
-             echo "❌ No se encontró el APK para firmar"
+             echo "❌ Error: No se generó ningún APK."
              exit 1
           fi
           
@@ -118,76 +124,78 @@ jobs:
           NEW_VER="${{ steps.versioning.outputs.new_ver }}"
           NEW_CODE="${{ steps.versioning.outputs.new_code }}"
           APK_PATH="${{ steps.sign_app.outputs.apk_path }}"
+          ZIP_NAME="QuickSwitch-Fork.zip"
           
-          # Copiar APK para el ZIP
+          # 1. Copiar APK dentro para el módulo
           cp "$APK_PATH" ./QuickSwitch.apk
           
-          # Changelog
+          # 2. Generar Changelog Detallado (Git Log)
           LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           echo "## $NEW_VER" > new_entry.md
           echo "### 📋 Changelog" >> new_entry.md
+          
           if [ -z "$LAST_TAG" ]; then
             git log --pretty=format:"* %s (%h)" >> new_entry.md
           else
+            # Muestra commits desde el último tag hasta hoy
             git log --pretty=format:"* %s (%h)" $LAST_TAG..HEAD >> new_entry.md
           fi
           echo -e "\n\n---" >> new_entry.md
           
-          # JSON Update
-          ZIP_NAME="QuickSwitch-Fork.zip"
+          # 3. Update JSON
           ZIP_URL="https://github.com/${{ github.repository }}/releases/download/$NEW_VER/$ZIP_NAME"
-          
           echo "{}" > update.json
           jq --null-input --arg ver "$NEW_VER" --arg code "$NEW_CODE" --arg url "$ZIP_URL" '{"version": $ver, "versionCode": ($code|tonumber), "zipUrl": $url}' > update.json
           
-          # Guardar versión
+          # 4. Actualizar Archivos de Versión
           echo "$NEW_CODE" > current.txt
           sed -i "s/versionCode=.*/versionCode=$NEW_CODE/" module.prop
           sed -i "s/version=.*/version=$NEW_VER/" module.prop
 
-          # Crear ZIP Limpio
+          # 5. Crear ZIP Limpio
           rm -f app-release-*.apk *.idsig
           
+          # Excluye basura explícitamente
           zip -r "$ZIP_NAME" . \
             -x "*.git*" ".github/*" "*.md" "*.yml" "current.txt" "QuickSwitch-App/*" \
             -x "QuickSwitch-v*.apk" "new_entry.md" "temp.json" "*.jks"
             
           echo "zip_name=$ZIP_NAME" >> $GITHUB_OUTPUT
 
-      # --- 6. GOFILE (RESILIENTE + TU FIX) ---
+      # --- 6. GOFILE (RESILIENTE) ---
       - name: ☁️ Upload to GoFile
         id: gofile
         continue-on-error: true
         run: |
           echo "### ☁️ GoFile Mirrors" >> new_entry.md
           
-          # Definir archivos
           FILE_APK="${{ steps.sign_app.outputs.apk_path }}"
           FILE_ZIP="${{ steps.create_zip.outputs.zip_name }}"
           
-          # 1. Obtener Servidor (Tu código)
+          # 1. Obtener Servidor
           SERVER=$(curl -s https://api.gofile.io/servers | jq -r '.data.servers[0].name')
           
           if [ -z "$SERVER" ] || [ "$SERVER" == "null" ]; then
-             echo "⚠️ No se pudo conectar a GoFile. Saltando..."
+             echo "⚠️ No se pudo conectar a la API de GoFile. Saltando subida."
              exit 0
           fi
 
-          # Función upload
+          # Función de subida
           upload_file() {
             local file=$1
             local resp=$(curl -s -F "file=@$file" "https://${SERVER}.gofile.io/contents/uploadfile")
             echo $resp | jq -r '.data.downloadPage'
           }
 
-          # Subir
-          echo "📤 Uploading APK..."
+          # Subir APK
+          echo "📤 Subiendo APK..."
           LINK_APK=$(upload_file "$FILE_APK")
           if [ "$LINK_APK" != "null" ]; then
              echo "* **APK:** $LINK_APK" >> new_entry.md
           fi
 
-          echo "📤 Uploading ZIP..."
+          # Subir ZIP
+          echo "📤 Subiendo ZIP..."
           LINK_ZIP=$(upload_file "$FILE_ZIP")
           if [ "$LINK_ZIP" != "null" ]; then
              echo "* **ZIP:** $LINK_ZIP" >> new_entry.md
