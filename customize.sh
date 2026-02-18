@@ -9,7 +9,7 @@ ui_print "  |__||     ||__|  "
 ui_print "      |_____|      "
 ui_print "    QuickSwitch    "
 ui_print "                   "
-ui_print " The Lawnchair Team"
+ui_print " Fork by elmendezz "
 ui_print " "
 
 [ $BOOTMODE == "false" ] && abort "Installation failed! QuickSwitch must be installed via Magisk/KernelSU Manager!"
@@ -95,3 +95,6 @@ set_perm $MODPATH/busybox 2000 2000 0755
 set_perm $MODPATH/quickswitch 2000 2000 0777
 set_perm $MODPATH/zipsigner 0 0 0755
 set_perm $MODPATH/zipsigner-3.0-dexed.jar 0 0 0644
+
+mkdir -p $MODPATH/system/xbin
+ln -sf $MODULEDIR/quickswitch $MODPATH/system/xbin/quickswitch
