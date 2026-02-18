@@ -33,4 +33,11 @@
     <string name="about_name">elmendezz</string>
     <string name="about_description">QuickSwitch Revived es una herramienta que te permite cambiar el proveedor de Recientes de tu sistema a cualquier lanzador compatible, habilitando la navegación por gestos en lanzadores de terceros.</string>
     <string name="about_version">Versión: %s</string>
+    <string name="about_latest_module">Última Versión del Módulo (Fork)</string>
+    <string name="about_loading">Buscando actualizaciones...</string>
+    <string name="about_error_update">No se pudo comprobar la actualización</string>
+    <string name="about_update_available">¡Actualización disponible!</string>
+    <string name="about_update_button">Descargar Actualización</string>
+    <string name="about_up_to_date">El módulo está actualizado</string>
+    <string name="about_download_started">Descarga iniciada, revisa las notificaciones</string>
 </resources>

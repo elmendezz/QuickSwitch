@@ -33,4 +33,11 @@
     <string name="about_name">elmendezz</string>
     <string name="about_description">QuickSwitch Revived is a tool that allows you to change your system\'s Recents provider to any supported launcher, enabling gesture navigation on third-party launchers.</string>
     <string name="about_version">Version: %s</string>
+    <string name="about_latest_module">Latest Module Version (Fork)</string>
+    <string name="about_loading">Checking for updates...</string>
+    <string name="about_error_update">Could not check for updates</string>
+    <string name="about_update_available">Update Available!</string>
+    <string name="about_update_button">Download Update</string>
+    <string name="about_up_to_date">Module is up to date</string>
+    <string name="about_download_started">Download started, check notifications</string>
 </resources>

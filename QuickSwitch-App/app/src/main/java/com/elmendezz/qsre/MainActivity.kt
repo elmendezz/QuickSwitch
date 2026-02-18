@@ -8,6 +8,8 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -27,6 +29,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
@@ -273,42 +276,52 @@ fun MainScreen() {
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.menu_about)) },
                                 onClick = { 
-                                    context.startActivity(Intent(context, AboutMeActivity::class.java))
+                                    val intent = Intent(context, AboutMeActivity::class.java)
+                                    intent.putExtra("installed_version", moduleInfo.version)
+                                    context.startActivity(intent)
                                     showMenu = false 
                                 }
                             )
                         }
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.Transparent
+                )
             )
-        }
+        },
+        containerColor = MaterialTheme.colorScheme.background
     ) { innerPadding ->
-        Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
-            val inUse = launchers.filter { it.status == LauncherStatus.IN_USE }
-            val available = launchers.filter { it.status == LauncherStatus.AVAILABLE }
+        Box(modifier = Modifier.fillMaxSize()) {
+            SingleCircleBackground()
 
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                item {
-                    ModuleInfoCard(moduleInfo)
+            Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
+                val inUse = launchers.filter { it.status == LauncherStatus.IN_USE }
+                val available = launchers.filter { it.status == LauncherStatus.AVAILABLE }
+
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    item {
+                        ModuleInfoCard(moduleInfo)
+                    }
+
+                    if (inUse.isNotEmpty()) {
+                        item { SectionHeader(stringResource(R.string.section_in_use)) }
+                        items(inUse) { LauncherItem(it) { pkg -> executeSwitch(pkg) } }
+                    }
+                    if (available.isNotEmpty()) {
+                        item { SectionHeader(stringResource(R.string.section_available)) }
+                        items(available) { LauncherItem(it) { pkg -> executeSwitch(pkg) } }
+                    }
                 }
 
-                if (inUse.isNotEmpty()) {
-                    item { SectionHeader(stringResource(R.string.section_in_use)) }
-                    items(inUse) { LauncherItem(it) { pkg -> executeSwitch(pkg) } }
-                }
-                if (available.isNotEmpty()) {
-                    item { SectionHeader(stringResource(R.string.section_available)) }
-                    items(available) { LauncherItem(it) { pkg -> executeSwitch(pkg) } }
-                }
-            }
-
-            if (isLoading) {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = Color.Black.copy(alpha = 0.3f)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
+                if (isLoading) {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = Color.Black.copy(alpha = 0.3f)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
                     }
                 }
             }
@@ -374,12 +387,53 @@ fun MainScreen() {
 }
 
 @Composable
+fun SingleCircleBackground() {
+    val infiniteTransition = rememberInfiniteTransition(label = "background")
+    
+    val xOffset by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(10000, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "xOffset"
+    )
+    
+    val yOffset by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(15000, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "yOffset"
+    )
+
+    val color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+    
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val width = size.width
+        val height = size.height
+        
+        drawCircle(
+            color = color,
+            radius = width * 0.4f,
+            center = Offset(
+                x = width * (0.2f + 0.6f * xOffset),
+                y = height * (0.2f + 0.6f * yOffset)
+            )
+        )
+    }
+}
+
+@Composable
 fun ModuleInfoCard(info: ModuleInfo) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .padding(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.8f))
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -425,8 +479,8 @@ fun LauncherItem(launcher: LauncherInfo, onClick: (String) -> Unit) {
             .clickable { onClick(launcher.packageName) },
         colors = CardDefaults.cardColors(
             containerColor = if (launcher.status == LauncherStatus.IN_USE) 
-                MaterialTheme.colorScheme.primaryContainer 
-            else MaterialTheme.colorScheme.surfaceVariant
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.8f)
+            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f)
         )
     ) {
         Row(
