@@ -1,7 +1,7 @@
 name: Build and Release Android & Magisk
 
 on:
-  push:
+ # push:
     branches:
       - 'anyfix/master'
   workflow_dispatch:
