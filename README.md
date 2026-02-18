@@ -34,7 +34,7 @@ When you operate the system, you need to understand how to use it and manage the
 ## Installation:  
 
 ## Magisk/KSU/APatch:  
-1. Install the latest QuickSwitch zip from the [GitHub releases](https://github.com/j7b3y/QuickSwitch/releases/latest).  
+1. Install the latest QuickSwitch zip from the [GitHub releases](https://github.com/elmendezz/QuickSwitch/releases/latest).  
 2. `su -c /data/adb/modules/quickswitch/quickswitch --ch=launcher.package.name`  
 3. Reboot.  
 4. Verify your new recents provider is correct.  
@@ -48,14 +48,8 @@ When you operate the system, you need to understand how to use it and manage the
 This is not complete but may help users who are having trouble with command line operations.  
 If you are a magisk user, you will need the following apps.  
 - [KsuWebUIStandalone](https://github.com/5ec1cff/KsuWebUIStandalone)  
+or
+- [WebUI X Portable](https://play.google.com/store/apps/details?id=com.dergoogler.mmrl.wx)
 
 ## Support:
-If you encounter any problems, you may find some hints in the github issues or [Telegram Group](https://t.me/QuickstepSwitcherSupport).  
-
-## Branches  
-- master  
-Original source.  
-- anyfix/*  
-It was to be used for pull requests.  
-- WIP/*  
-With incomplete new elements.
+If you encounter any problems, you may find some hints in the [GitHub Issues](https://github.com/elmendezz/QuickSwitch/issues) or [Telegram Group](https://t.me/QuickstepSwitcherSupport).  
