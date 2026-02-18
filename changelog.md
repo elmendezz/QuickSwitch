@@ -1,3 +1,17 @@
+## 🚀 v21.0 (ce3cb40)
+**👤 Author:** elmendezz
+
+### 📝 Changes
+```text
+Merge branch 'anyfix/master' of https://github.com/elmendezz/QuickSwitch into anyfix/master
+```
+### 📊 Files Changed
+```diff
+ .github/workflows/main.yml  | 12 +-----------
+ .github/workflows/tests.yml | 11 +----------
+ uninstall.sh                |  2 +-
+ 3 files changed, 3 insertions(+), 22 deletions(-)
+```
 ## 🚀 v20.0 (917cb51)
 **👤 Author:** elmendezz
 
