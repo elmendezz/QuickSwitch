@@ -1,69 +1,67 @@
-name: Magisk Module Auto-Release
+name: Magisk Auto-Update V6
 
 on:
   push:
     branches:
-      - main
+      - main  # O 'master', asegúrate de que sea el nombre de tu rama
     paths-ignore:
       - 'README.md'
       - 'changelog.md'
       - '.github/**'
 
 jobs:
-  build-and-release:
+  build:
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup Versioning
-        id: versioning
+      - name: Bump Version and Update Files
+        id: bump
         run: |
-          # 1. Obtener versión actual de module.prop y aumentar versionCode
+          # Extraer versionCode actual del module.prop
           OLD_CODE=$(grep 'versionCode=' module.prop | cut -d= -f2)
           NEW_CODE=$((OLD_CODE + 1))
-          NEW_VER="v${NEW_CODE}.0" # O usa v6, v7, etc.
+          NEW_VER="v${NEW_CODE}.0"
           
-          # 2. Editar module.prop automáticamente
+          # Actualizar module.prop
           sed -i "s/versionCode=.*/versionCode=$NEW_CODE/" module.prop
           sed -i "s/version=.*/version=$NEW_VER/" module.prop
           
-          echo "new_ver=$NEW_VER" >> $GITHUB_OUTPUT
-          echo "new_code=$NEW_CODE" >> $GITHUB_OUTPUT
-
-      - name: Create ZIP
-        run: |
-          # Empaquetamos todo excluyendo archivos de git y github
-          zip -r "modulo-${{ steps.versioning.outputs.new_ver }}.zip" . -x "*.git*" ".github/*" "README.md"
-
-      - name: Update update.json
-        run: |
-          # Actualizar el JSON con la nueva info
-          jq --arg ver "${{ steps.versioning.outputs.new_ver }}" \
-             --arg code "${{ steps.versioning.outputs.new_code }}" \
-             --arg url "https://github.com/${{ github.repository }}/releases/download/${{ steps.versioning.outputs.new_ver }}/modulo-${{ steps.versioning.outputs.new_ver }}.zip" \
+          # Actualizar update.json
+          # Cambia 'tu_usuario' y 'tu_repo' por los tuyos
+          ZIP_URL="https://github.com/${{ github.repository }}/releases/download/$NEW_VER/modulo-$NEW_VER.zip"
+          
+          jq --arg ver "$NEW_VER" \
+             --arg code "$NEW_CODE" \
+             --arg url "$ZIP_URL" \
              '.version = $ver | .versionCode = ($code | tonumber) | .zipUrl = $url' \
              update.json > temp.json && mv temp.json update.json
+          
+          echo "new_tag=$NEW_VER" >> $GITHUB_OUTPUT
 
-      - name: Commit Automatic Updates
+      - name: Zip Module
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
+          zip -r "modulo-${{ steps.bump.outputs.new_tag }}.zip" . -x "*.git*" ".github/*" "README.md"
+
+      - name: Commit & Push Changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
           git add module.prop update.json
-          git commit -m "Bump version to ${{ steps.versioning.outputs.new_ver }}"
+          git commit -m "Auto-bump to ${{ steps.bump.outputs.new_tag }} [skip ci]"
           git push
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ steps.versioning.outputs.new_ver }}
-          name: Release ${{ steps.versioning.outputs.new_ver }}
+          tag_name: ${{ steps.bump.outputs.new_tag }}
+          name: Release ${{ steps.bump.outputs.new_tag }}
           body_path: changelog.md
-          files: "modulo-${{ steps.versioning.outputs.new_ver }}.zip"
+          files: "modulo-${{ steps.bump.outputs.new_tag }}.zip"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
