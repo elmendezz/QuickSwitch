@@ -1,0 +1,69 @@
+name: Magisk Module Auto-Release
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'README.md'
+      - 'changelog.md'
+      - '.github/**'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Versioning
+        id: versioning
+        run: |
+          # 1. Obtener versión actual de module.prop y aumentar versionCode
+          OLD_CODE=$(grep 'versionCode=' module.prop | cut -d= -f2)
+          NEW_CODE=$((OLD_CODE + 1))
+          NEW_VER="v${NEW_CODE}.0" # O usa v6, v7, etc.
+          
+          # 2. Editar module.prop automáticamente
+          sed -i "s/versionCode=.*/versionCode=$NEW_CODE/" module.prop
+          sed -i "s/version=.*/version=$NEW_VER/" module.prop
+          
+          echo "new_ver=$NEW_VER" >> $GITHUB_OUTPUT
+          echo "new_code=$NEW_CODE" >> $GITHUB_OUTPUT
+
+      - name: Create ZIP
+        run: |
+          # Empaquetamos todo excluyendo archivos de git y github
+          zip -r "modulo-${{ steps.versioning.outputs.new_ver }}.zip" . -x "*.git*" ".github/*" "README.md"
+
+      - name: Update update.json
+        run: |
+          # Actualizar el JSON con la nueva info
+          jq --arg ver "${{ steps.versioning.outputs.new_ver }}" \
+             --arg code "${{ steps.versioning.outputs.new_code }}" \
+             --arg url "https://github.com/${{ github.repository }}/releases/download/${{ steps.versioning.outputs.new_ver }}/modulo-${{ steps.versioning.outputs.new_ver }}.zip" \
+             '.version = $ver | .versionCode = ($code | tonumber) | .zipUrl = $url' \
+             update.json > temp.json && mv temp.json update.json
+
+      - name: Commit Automatic Updates
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add module.prop update.json
+          git commit -m "Bump version to ${{ steps.versioning.outputs.new_ver }}"
+          git push
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.versioning.outputs.new_ver }}
+          name: Release ${{ steps.versioning.outputs.new_ver }}
+          body_path: changelog.md
+          files: "modulo-${{ steps.versioning.outputs.new_ver }}.zip"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
