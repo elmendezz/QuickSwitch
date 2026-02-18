@@ -3,26 +3,20 @@ name: Auto Magisk Release (AnyFix)
 on:
   push:
     branches:
-      - 'anyfix/master'  # <--- IMPORTANTE: Entre comillas simples por la barra /
-    paths-ignore:
-      - 'README.md'
-      - 'changelog.md'
-      - '.github/**'
-      - '*.yml'
-      - '*.yaml'
+      - 'anyfix/master'
 
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Necesario para editar archivos y crear releases
-    
+      contents: write
+
     steps:
       - name: Checkout del código
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: 'anyfix/master' # Asegura que bajamos la rama correcta
+          ref: 'anyfix/master'
 
       - name: Automatizar Versión y JSON
         id: versioning
@@ -41,15 +35,15 @@ jobs:
           sed -i "s/versionCode=.*/versionCode=$NEW_CODE/" module.prop
           sed -i "s/version=.*/version=$NEW_VER/" module.prop
           
-          # 4. Actualizar update.json
-          # NOTA: Asegúrate de que 'tu_usuario/tu_repo' sea correcto en la URL final si esto falla
+          # 4. Construir URL del release
           ZIP_URL="https://github.com/${{ github.repository }}/releases/download/$NEW_VER/QuickSwitch-$NEW_VER.zip"
           
-          # Si update.json no existe, crea uno básico, si existe, lo actualiza
+          # 5. Crear update.json si no existe
           if [ ! -f update.json ]; then
             echo "{}" > update.json
           fi
 
+          # 6. Actualizar JSON
           jq --arg ver "$NEW_VER" \
              --arg code "$NEW_CODE" \
              --arg url "$ZIP_URL" \
@@ -60,16 +54,15 @@ jobs:
 
       - name: Crear ZIP del Módulo
         run: |
-          # Crea el zip con el nombre de la nueva versión
-          zip -r "QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip" . -x "*.git*" ".github/*" "*.md" "*.yml" "update.json"
+          zip -r "QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip" . \
+            -x "*.git*" ".github/*" "*.md" "*.yml" "*.yaml" "update.json"
 
       - name: Guardar cambios (Commit & Push)
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add module.prop update.json
-          git commit -m "Auto-bump to ${{ steps.versioning.outputs.new_ver }} [skip ci]"
-          # Empujamos explícitamente a anyfix/master
+          git commit -m "Auto-bump to ${{ steps.versioning.outputs.new_ver }} [skip ci]" || echo "No changes to commit"
           git push origin HEAD:anyfix/master
 
       - name: Publicar Release
@@ -78,6 +71,6 @@ jobs:
           tag_name: ${{ steps.versioning.outputs.new_ver }}
           name: QuickSwitch ${{ steps.versioning.outputs.new_ver }}
           body_path: changelog.md
-          files: "QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip"
+          files: QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
