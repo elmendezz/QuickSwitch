@@ -1,0 +1,39 @@
+name: Upload to Gofile Example
+on:
+  workflow_dispatch: # Se activa manualmente
+
+jobs:
+  gofile-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create Dummy File
+        run: |
+          # Creamos el archivo que no existe en el repo
+          echo "hola gofile" > hola.txt
+
+      - name: Upload to GitHub Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: my-artifact
+          path: hola.txt
+
+      - name: Upload to Gofile
+        id: gofile
+        run: |
+          # 1. Obtenemos un servidor disponible de Gofile
+          SERVER=$(curl -s https://api.gofile.io/servers | jq -r '.data.servers[0].name')
+          
+          # 2. Subimos el archivo a ese servidor
+          # Usamos @hola.txt para decirle a curl que suba el archivo físico
+          RESPONSE=$(curl -F "file=@hola.txt" "https://${SERVER}.gofile.io/contents/uploadfile")
+          
+          # 3. Extraemos el link de descarga (Download Page)
+          DOWNLOAD_LINK=$(echo $RESPONSE | jq -r '.data.downloadPage')
+          
+          echo "Tu archivo está en: $DOWNLOAD_LINK"
+          echo "link=$DOWNLOAD_LINK" >> $GITHUB_OUTPUT
+
+      - name: Show Result
+        run: |
+          echo "La subida fue exitosa."
+          echo "Enlace público: ${{ steps.gofile.outputs.link }}"
