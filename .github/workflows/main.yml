@@ -53,7 +53,7 @@ jobs:
           echo "new_ver=$NEW_VER" >> $GITHUB_OUTPUT
           echo "new_code=$NEW_CODE" >> $GITHUB_OUTPUT
 
-      # --- 2. SETUP JAVA & ANDROID (CON CACHÉ) ---
+      # --- 2. SETUP JAVA & ANDROID ---
       - name: ☕ Setup Java 17
         if: steps.check_changes.outputs.should_run == 'true'
         uses: actions/setup-java@v4
@@ -82,7 +82,7 @@ jobs:
           # Build optimizado
           ./gradlew assembleRelease --no-daemon --parallel --build-cache -x lint -x test
 
-      # --- 4. FIRMA MANUAL ---
+      # --- 4. FIRMA MANUAL (CORREGIDO: Desactivar V4 y borrar intermedios) ---
       - name: 🔐 Sign APK Manually
         if: steps.check_changes.outputs.should_run == 'true'
         id: sign_app
@@ -98,9 +98,15 @@ jobs:
           ALIGNED_APK="app-release-aligned.apk"
           SIGNED_APK="QuickSwitch-Signed.apk"
 
+          # Alinear
           "$TOOLS_PATH/zipalign" -v -p 4 "$INPUT_APK" "$ALIGNED_APK"
-          "$TOOLS_PATH/apksigner" sign --ks release.jks --ks-key-alias "${{ secrets.ALIAS }}" --ks-pass "pass:${{ secrets.KEY_STORE_PASSWORD }}" --key-pass "pass:${{ secrets.KEY_PASSWORD }}" --out "$SIGNED_APK" "$ALIGNED_APK"
+          
+          # Firmar (Añadido --v4-signing-enabled false para evitar el .idsig)
+          "$TOOLS_PATH/apksigner" sign --ks release.jks --ks-key-alias "${{ secrets.ALIAS }}" --ks-pass "pass:${{ secrets.KEY_STORE_PASSWORD }}" --key-pass "pass:${{ secrets.KEY_PASSWORD }}" --v4-signing-enabled false --out "$SIGNED_APK" "$ALIGNED_APK"
 
+          # Limpieza inmediata de archivos basura
+          rm "$ALIGNED_APK"
+          
           echo "signed_apk_path=$SIGNED_APK" >> $GITHUB_OUTPUT
 
       # --- 5. PROCESAR ---
@@ -108,7 +114,9 @@ jobs:
         if: steps.check_changes.outputs.should_run == 'true'
         run: |
           SIGNED_APK="${{ steps.sign_app.outputs.signed_apk_path }}"
+          # Copia para el Release de GitHub (con versión)
           cp "$SIGNED_APK" "./QuickSwitch-${{ steps.versioning.outputs.new_ver }}.apk"
+          # Copia para dentro del ZIP del módulo (nombre fijo)
           cp "$SIGNED_APK" ./QuickSwitch.apk
 
       # --- 6. UPDATE FILES ---
@@ -121,7 +129,7 @@ jobs:
           sed -i "s/versionCode=.*/versionCode=$NEW_CODE/" module.prop
           sed -i "s/version=.*/version=$NEW_VER/" module.prop
 
-      # --- 7. METADATA & ZIP (CORREGIDO: JQ EN UNA LÍNEA) ---
+      # --- 7. METADATA & ZIP (CORREGIDO: Exclusiones más estrictas) ---
       - name: 📄 Generate Metadata & Zip
         if: steps.check_changes.outputs.should_run == 'true'
         run: |
@@ -139,12 +147,15 @@ jobs:
           
           if [ ! -s update.json ]; then echo "{}" > update.json; fi
 
-          # CORRECCIÓN AQUÍ: Todo el comando jq en una línea para evitar error de EOF
           jq --arg ver "$NEW_VER" --arg code "$NEW_CODE" --arg url "$ZIP_URL" --arg log "$CHANGELOG_URL" '.version = $ver | .versionCode = ($code | tonumber) | .zipUrl = $url | .changelog = $log' update.json > temp.json && mv temp.json update.json
 
+          # ZIP Optimizado: 
+          # 1. Incluye QuickSwitch.apk (el nombre corto)
+          # 2. Excluye el APK con versión (QuickSwitch-vX.apk)
+          # 3. Excluye firmas residuales (*.idsig) y APKs intermedios
           zip -r "QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip" . \
             -x "*.git*" ".github/*" "*.md" "*.yml" "update.json" "current.txt" "QuickSwitch-App/*" \
-            -x "QuickSwitch-*.apk" "new_entry.md" "temp.json" "*.jks"
+            -x "QuickSwitch-v*.apk" "new_entry.md" "temp.json" "*.jks" "*.idsig" "app-release-*.apk"
 
       # --- 8. COMMIT ---
       - name: 🤖 Commit Bump
