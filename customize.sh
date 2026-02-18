@@ -171,6 +171,6 @@ set_perm $MODPATH/zipsigner 0 0 0755
 set_perm $MODPATH/zipsigner-3.0-dexed.jar 0 0 0644
 
 ui_print " "
-ui_print " ✔ QuickSwitch installation completed"
-ui_print " ✔ Launcher provider preserved"
+ui_print " Please Restart And Re-set your launcher"
+ui_print " ✔ You can Restart. "
 ui_print " "
