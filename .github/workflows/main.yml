@@ -18,11 +18,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      # --- 0. DETECTOR DE CAMBIOS (CORREGIDO) ---
+      # --- 0. DETECTOR DE CAMBIOS ---
       - name: 🕵️ Check for relevant changes
         id: check_changes
         run: |
-          # Si es manual, forzamos modo TEST
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             echo "⚠️ Ejecución Manual: MODO TEST ACTIVO."
             echo "should_run=true" >> $GITHUB_OUTPUT
@@ -30,13 +29,8 @@ jobs:
             exit 0
           fi
 
-          # 🛑 LISTA DE IGNORADOS ACTUALIZADA 🛑
-          # Ahora ignora cambios en .github (workflows), markdowns, json y txt
           IGNORE_PATTERN="README.md|changelog.md|update.json|module.prop|current.txt|.github/.*|.*\.yml"
-          
           CHANGED_FILES=$(git diff --name-only HEAD^ HEAD)
-          
-          # Filtramos: Si SOLO hay archivos de la lista ignore, NON_IGNORED estará vacío
           NON_IGNORED=$(echo "$CHANGED_FILES" | grep -vE "$IGNORE_PATTERN" || true)
 
           if [ -z "$NON_IGNORED" ]; then
@@ -76,7 +70,12 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      # --- 3. BUILD ---
+      # --- 3. ANDROID SDK (NUEVO: ARREGLA EL ERROR DE FIRMA) ---
+      - name: ⚙️ Setup Android SDK
+        if: steps.check_changes.outputs.should_run == 'true'
+        uses: android-actions/setup-android@v3
+
+      # --- 4. BUILD ---
       - name: 🔨 Build Release APK
         if: steps.check_changes.outputs.should_run == 'true'
         run: |
@@ -90,20 +89,21 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
 
-      # --- 4. FIRMA (CORREGIDO: Parámetros ilharp) ---
+      # --- 5. FIRMA ---
       - name: 🔐 Sign APK
         if: steps.check_changes.outputs.should_run == 'true'
         id: sign_app
         uses: ilharp/sign-android-release@v1
         with:
-          # Nombres corregidos para ilharp:
           releaseDir: QuickSwitch-App/app/build/outputs/apk/release
           signingKey: ${{ secrets.SIGNING_KEY }}
           keyAlias: ${{ secrets.ALIAS }}
           keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD }}
           keyPassword: ${{ secrets.KEY_PASSWORD }}
+          # Opcional: Si sigue fallando, descomenta la siguiente línea para forzar una versión
+          # buildToolsVersion: 34.0.0
 
-      # --- 5. PROCESAR ---
+      # --- 6. PROCESAR ---
       - name: 📦 Process Artifacts
         if: steps.check_changes.outputs.should_run == 'true'
         run: |
@@ -111,7 +111,7 @@ jobs:
           cp "$SIGNED_APK" "./QuickSwitch-${{ steps.versioning.outputs.new_ver }}.apk"
           cp "$SIGNED_APK" ./QuickSwitch.apk
 
-      # --- 6. UPDATE FILES ---
+      # --- 7. UPDATE FILES ---
       - name: 📝 Update Version Files
         if: steps.check_changes.outputs.should_run == 'true'
         run: |
@@ -121,7 +121,7 @@ jobs:
           sed -i "s/versionCode=.*/versionCode=$NEW_CODE/" module.prop
           sed -i "s/version=.*/version=$NEW_VER/" module.prop
 
-      # --- 7. CHANGELOG ---
+      # --- 8. CHANGELOG ---
       - name: 📄 Generate Changelog
         if: steps.check_changes.outputs.should_run == 'true'
         run: |
@@ -145,7 +145,7 @@ jobs:
             cp new_entry.md changelog.md
           fi
 
-      # --- 8. UPDATE JSON ---
+      # --- 9. UPDATE JSON ---
       - name: 🔄 Update update.json
         if: steps.check_changes.outputs.should_run == 'true'
         run: |
@@ -163,7 +163,7 @@ jobs:
              '.version = $ver | .versionCode = ($code | tonumber) | .zipUrl = $url | .changelog = $log' \
              update.json > temp.json && mv temp.json update.json
 
-      # --- 9. ZIP ---
+      # --- 10. ZIP ---
       - name: 🤐 Create Magisk ZIP
         if: steps.check_changes.outputs.should_run == 'true'
         run: |
@@ -171,7 +171,7 @@ jobs:
             -x "*.git*" ".github/*" "*.md" "*.yml" "*.yaml" "update.json" "current.txt" "QuickSwitch-App/*" \
             -x "QuickSwitch-*.apk" "new_entry.md" "temp.json"
 
-      # --- 10. COMMIT ---
+      # --- 11. COMMIT ---
       - name: 🤖 Commit Bump
         if: steps.check_changes.outputs.should_run == 'true' && steps.check_changes.outputs.is_test == 'false'
         run: |
@@ -182,7 +182,7 @@ jobs:
           git commit -m "🤖 Bump version to ${{ steps.versioning.outputs.new_ver }} [skip ci]" || echo "No changes"
           git push origin HEAD:anyfix/master
 
-      # --- 11. RELEASE ---
+      # --- 12. RELEASE ---
       - name: 🚀 Publish Release
         if: steps.check_changes.outputs.should_run == 'true' && steps.check_changes.outputs.is_test == 'false'
         uses: softprops/action-gh-release@v1
@@ -196,9 +196,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # --- RESUMEN ---
+      # --- RESUMEN FINAL ---
       - name: 🏁 Status Check
         if: always()
         run: |
-          echo "Did it run? ${{ steps.check_changes.outputs.should_run }}"
-          echo "Was it a test? ${{ steps.check_changes.outputs.is_test }}"
+          echo "Status: ${{ job.status }}"
+          echo "Test Mode: ${{ steps.check_changes.outputs.is_test }}"
