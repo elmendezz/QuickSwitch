@@ -65,16 +65,6 @@ jobs:
         if: steps.check_changes.outputs.should_run == 'true'
         uses: android-actions/setup-android@v3
 
-      # --- 2.1 CACHE (NUEVO) ---
-      - name: ⚡ Cache Gradle
-        if: steps.check_changes.outputs.should_run == 'true'
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-
       # --- 3. BUILD ULTRA RÁPIDO (Con alternativa básica) ---
       - name: 🔨 Build Release APK
         if: steps.check_changes.outputs.should_run == 'true'
@@ -181,7 +171,7 @@ jobs:
           echo "Comprimiendo..."
           
           # Intento 1: Sistema ZIP nativo
-          if zip -9 -r "$TARGET_ZIP" . -x "*.git*" ".github/*" "*.md" "*.yml" "update.json" "current.txt" "QuickSwitch-App/*" -x "QuickSwitch-v*.apk" "new_entry.md" "temp.json" "*.jks"; then
+          if zip -r "$TARGET_ZIP" . -x "*.git*" ".github/*" "*.md" "*.yml" "update.json" "current.txt" "QuickSwitch-App/*" -x "QuickSwitch-v*.apk" "new_entry.md" "temp.json" "*.jks"; then
             echo "✅ Zip creado exitosamente con herramienta nativa."
           else
             echo "⚠️ 'zip' falló. Usando Python Fallback..."

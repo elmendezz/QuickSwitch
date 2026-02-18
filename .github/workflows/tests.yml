@@ -44,15 +44,6 @@ jobs:
       - name: ⚙️ Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      # --- 2.1 CACHE (NUEVO) ---
-      - name: ⚡ Cache Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-
       # --- 3. BUILD TEST VERSION (Forzada a 0) ---
       - name: 🔨 Build Test APK
         run: |
@@ -97,7 +88,7 @@ jobs:
           cp "$SIGNED_APK" ./QuickSwitch.apk
           
           # Crear ZIP ignorando basura
-          zip -9 -r "QuickSwitch-Test-v0.zip" . \
+          zip -r "QuickSwitch-Test-v0.zip" . \
             -x "*.git*" ".github/*" "*.md" "*.yml" "update.json" "current.txt" "QuickSwitch-App/*" \
             -x "QuickSwitch-Test.apk" "release_notes.md" "*.jks"
 
