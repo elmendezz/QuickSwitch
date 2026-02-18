@@ -4,12 +4,7 @@ on:
   push:
     branches:
       - 'anyfix/master'
-    paths-ignore:
-      - 'README.md'
-      - 'changelog.md'
-      - 'update.json'
-      - 'module.prop'
-      - 'current.txt' 
+  workflow_dispatch:
 
 jobs:
   build-and-release:
@@ -18,82 +13,141 @@ jobs:
       contents: write
 
     steps:
-      - name: 📥 Checkout del código
+      - name: 📥 Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: 'anyfix/master'
 
-      # --- 1. LÓGICA DE VERSIONADO (MEJORADA) ---
-      - name: 🏷️ Calcular Versión
+      # --- 0. DETECTOR DE CAMBIOS ---
+      - name: 🕵️ Check for relevant changes
+        id: check_changes
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "⚠️ Ejecución Manual: MODO TEST ACTIVO."
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            echo "is_test=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          IGNORE_PATTERN="README.md|changelog.md|update.json|module.prop|current.txt|.github/.*|.*\.yml"
+          CHANGED_FILES=$(git diff --name-only HEAD^ HEAD)
+          NON_IGNORED=$(echo "$CHANGED_FILES" | grep -vE "$IGNORE_PATTERN" || true)
+
+          if [ -z "$NON_IGNORED" ]; then
+            echo "🛑 Workflow evitado. Razón: Solo cambios en config/docs/yml."
+            echo "should_run=false" >> $GITHUB_OUTPUT
+            echo "is_test=false" >> $GITHUB_OUTPUT
+          else
+            echo "✅ Cambios de código fuente detectados. Procediendo."
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            echo "is_test=false" >> $GITHUB_OUTPUT
+          fi
+
+      # --- 1. CÁLCULO DE VERSIÓN ---
+      - name: 🧮 Calculate Next Version
+        if: steps.check_changes.outputs.should_run == 'true'
         id: versioning
         run: |
-          # Leer versión actual o fallback
           if [ -f current.txt ]; then
             OLD_CODE=$(cat current.txt | tr -dc '0-9')
           else
             OLD_CODE=$(grep 'versionCode=' module.prop | cut -d= -f2 || echo "0")
           fi
           
-          # Si falla, iniciar en 1
           if [ -z "$OLD_CODE" ] || [ "$OLD_CODE" -eq 0 ]; then OLD_CODE=1; fi
           
-          # Calcular nueva
           NEW_CODE=$((OLD_CODE + 1))
           NEW_VER="v${NEW_CODE}.0"
           
-          echo "🚀 Bump version: $OLD_CODE -> $NEW_CODE ($NEW_VER)"
-          
-          # Guardar para pasos siguientes
-          echo "$NEW_CODE" > current.txt
-          
-          # Actualizar module.prop
-          sed -i "s/versionCode=.*/versionCode=$NEW_CODE/" module.prop
-          sed -i "s/version=.*/version=$NEW_VER/" module.prop
-          
-          # Exportar outputs
           echo "new_ver=$NEW_VER" >> $GITHUB_OUTPUT
           echo "new_code=$NEW_CODE" >> $GITHUB_OUTPUT
 
-      # --- 2. CHANGELOG PERRÓN (CON DIFFS Y ESTRUCTURA) ---
-      - name: 📝 Generar Changelog Pro
+      # --- 2. JAVA ---
+      - name: ☕ Setup Java 17
+        if: steps.check_changes.outputs.should_run == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # --- 3. ANDROID SDK (NUEVO: ARREGLA EL ERROR DE FIRMA) ---
+      - name: ⚙️ Setup Android SDK
+        if: steps.check_changes.outputs.should_run == 'true'
+        uses: android-actions/setup-android@v3
+
+      # --- 4. BUILD ---
+      - name: 🔨 Build Release APK
+        if: steps.check_changes.outputs.should_run == 'true'
+        run: |
+          VER_CODE="${{ steps.versioning.outputs.new_code }}"
+          VER_NAME="${{ steps.versioning.outputs.new_ver }}"
+          
+          cd QuickSwitch-App
+          find . -name "build.gradle.kts" -exec sed -i "s/versionCode\s*=\s*[0-9]\+/versionCode = $VER_CODE/" {} +
+          find . -name "build.gradle.kts" -exec sed -i "s/versionName\s*=\s*\".*\"/versionName = \"$VER_NAME\"/" {} +
+          
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+
+      # --- 5. FIRMA ---
+      - name: 🔐 Sign APK
+        if: steps.check_changes.outputs.should_run == 'true'
+        id: sign_app
+        uses: ilharp/sign-android-release@v1
+        with:
+          releaseDir: QuickSwitch-App/app/build/outputs/apk/release
+          signingKey: ${{ secrets.SIGNING_KEY }}
+          keyAlias: ${{ secrets.ALIAS }}
+          keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD }}
+          keyPassword: ${{ secrets.KEY_PASSWORD }}
+          # Opcional: Si sigue fallando, descomenta la siguiente línea para forzar una versión
+          # buildToolsVersion: 34.0.0
+
+      # --- 6. PROCESAR ---
+      - name: 📦 Process Artifacts
+        if: steps.check_changes.outputs.should_run == 'true'
+        run: |
+          SIGNED_APK="${{ steps.sign_app.outputs.signedReleaseFile }}"
+          cp "$SIGNED_APK" "./QuickSwitch-${{ steps.versioning.outputs.new_ver }}.apk"
+          cp "$SIGNED_APK" ./QuickSwitch.apk
+
+      # --- 7. UPDATE FILES ---
+      - name: 📝 Update Version Files
+        if: steps.check_changes.outputs.should_run == 'true'
+        run: |
+          NEW_CODE="${{ steps.versioning.outputs.new_code }}"
+          NEW_VER="${{ steps.versioning.outputs.new_ver }}"
+          echo "$NEW_CODE" > current.txt
+          sed -i "s/versionCode=.*/versionCode=$NEW_CODE/" module.prop
+          sed -i "s/version=.*/version=$NEW_VER/" module.prop
+
+      # --- 8. CHANGELOG ---
+      - name: 📄 Generate Changelog
+        if: steps.check_changes.outputs.should_run == 'true'
         run: |
           NEW_VER="${{ steps.versioning.outputs.new_ver }}"
           COMMIT_MSG=$(git log -1 --pretty=%B)
-          AUTHOR_NAME=$(git log -1 --pretty=%an)
-          
-          # Generar estadísticas visuales de cambios (archivos modificados)
           DIFF_STAT=$(git diff-tree --no-commit-id --stat -r HEAD)
           
-          # Crear cabecera de la nueva entrada
-          echo "## $NEW_VER (🔴 Current / Actual)" > new_entry.md
-          echo "> **📅 Date:** $(date +'%Y-%m-%d') | **🤖 By:** $AUTHOR_NAME" >> new_entry.md
-          echo "" >> new_entry.md
-          
-          # Sección de cambios (Simulando estructura bilingüe)
-          echo "### 🇬🇧 English / 🇪🇸 Español Changes" >> new_entry.md
+          echo "## $NEW_VER" > new_entry.md
+          echo "**Changes:**" >> new_entry.md
           echo "$COMMIT_MSG" >> new_entry.md
           echo "" >> new_entry.md
-          
-          # Sección técnica visual (Diffs cortos)
-          echo "### 📊 File Stats (Diffs)" >> new_entry.md
           echo "\`\`\`diff" >> new_entry.md
           echo "$DIFF_STAT" >> new_entry.md
           echo "\`\`\`" >> new_entry.md
-          echo "" >> new_entry.md
           echo "---" >> new_entry.md
           
-          # Unir con el changelog antiguo (quitando la marca 'Current' de versiones viejas si existiera)
-          if [ -f changelog.md ] && [ -s changelog.md ]; then
-            # Truco: sed aquí podría limpiar etiquetas viejas si quisieras, 
-            # pero por seguridad solo concatenamos.
-            cat changelog.md >> new_entry.md
+          if [ -f changelog.md ]; then
+            cat new_entry.md changelog.md > temp_changelog.md
+            mv temp_changelog.md changelog.md
+          else
+            cp new_entry.md changelog.md
           fi
-          
-          mv new_entry.md changelog.md
 
-      # --- 3. ACTUALIZACIÓN UPDATE.JSON ---
-      - name: 🔄 Actualizar update.json
+      # --- 9. UPDATE JSON ---
+      - name: 🔄 Update update.json
+        if: steps.check_changes.outputs.should_run == 'true'
         run: |
           NEW_VER="${{ steps.versioning.outputs.new_ver }}"
           NEW_CODE="${{ steps.versioning.outputs.new_code }}"
@@ -109,71 +163,42 @@ jobs:
              '.version = $ver | .versionCode = ($code | tonumber) | .zipUrl = $url | .changelog = $log' \
              update.json > temp.json && mv temp.json update.json
 
-      # --- 4. BUILD ANDROID ---
-      - name: ☕ Configurar Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: 🔨 Compilar APK
+      # --- 10. ZIP ---
+      - name: 🤐 Create Magisk ZIP
+        if: steps.check_changes.outputs.should_run == 'true'
         run: |
-          VER_CODE="${{ steps.versioning.outputs.new_code }}"
-          VER_NAME="${{ steps.versioning.outputs.new_ver }}"
-          
-          cd QuickSwitch-App
-          # Inyectar versión en gradle kts
-          find . -name "build.gradle.kts" -exec sed -i "s/versionCode\s*=\s*[0-9]\+/versionCode = $VER_CODE/" {} +
-          find . -name "build.gradle.kts" -exec sed -i "s/versionName\s*=\s*\".*\"/versionName = \"$VER_NAME\"/" {} +
-          
-          chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
-
-      # --- 5. GESTIÓN DE APKs (LA MAGIA AQUÍ) ---
-      - name: 📦 Preparar APKs
-        run: |
-          # Encontrar el APK compilado
-          BUILT_APK=$(find QuickSwitch-App -name "*-debug.apk" | head -n 1)
-          
-          echo "APK encontrado en: $BUILT_APK"
-          
-          # 1. Copia para el ZIP (nombre fijo 'QuickSwitch.apk')
-          cp "$BUILT_APK" ./QuickSwitch.apk
-          
-          # 2. Copia para subir al Release (nombre con versión)
-          cp "$BUILT_APK" "./QuickSwitch-${{ steps.versioning.outputs.new_ver }}.apk"
-
-      # --- 6. EMPAQUETADO ZIP ---
-      - name: 🤐 Crear ZIP Magisk
-        run: |
-          # Creamos el ZIP incluyendo explícitamente el QuickSwitch.apk (el fijo)
-          # Excluimos basura y el APK versionado que va suelto
           zip -r "QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip" . \
             -x "*.git*" ".github/*" "*.md" "*.yml" "*.yaml" "update.json" "current.txt" "QuickSwitch-App/*" \
-            -x "QuickSwitch-*.apk" # Excluye el APK versionado, pero mantiene QuickSwitch.apk
+            -x "QuickSwitch-*.apk" "new_entry.md" "temp.json"
 
-      # --- 7. COMMIT DEL BOT ---
-      - name: 🤖 Guardar cambios (Bot Bump)
+      # --- 11. COMMIT ---
+      - name: 🤖 Commit Bump
+        if: steps.check_changes.outputs.should_run == 'true' && steps.check_changes.outputs.is_test == 'false'
         run: |
           git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          
           git add module.prop update.json changelog.md current.txt
           git add QuickSwitch-App/**/build.gradle.kts
-          
-          # Mensaje claro indicando que fue el bot
-          git commit -m "🤖 Bump version to ${{ steps.versioning.outputs.new_ver }} [skip ci]" || echo "No changes to commit"
+          git commit -m "🤖 Bump version to ${{ steps.versioning.outputs.new_ver }} [skip ci]" || echo "No changes"
           git push origin HEAD:anyfix/master
 
-      # --- 8. RELEASE ---
-      - name: 🚀 Publicar Release
+      # --- 12. RELEASE ---
+      - name: 🚀 Publish Release
+        if: steps.check_changes.outputs.should_run == 'true' && steps.check_changes.outputs.is_test == 'false'
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.versioning.outputs.new_ver }}
           name: QuickSwitch ${{ steps.versioning.outputs.new_ver }}
-          body_path: new_entry.md  # Usamos solo la entrada nueva para la descripción del release
+          body_path: new_entry.md
           files: |
             QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip
             QuickSwitch-${{ steps.versioning.outputs.new_ver }}.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # --- RESUMEN FINAL ---
+      - name: 🏁 Status Check
+        if: always()
+        run: |
+          echo "Status: ${{ job.status }}"
+          echo "Test Mode: ${{ steps.check_changes.outputs.is_test }}"
