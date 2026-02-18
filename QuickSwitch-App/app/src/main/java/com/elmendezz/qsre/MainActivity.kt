@@ -2,14 +2,11 @@ package com.elmendezz.qsre
 
 import android.content.Context
 import android.content.Intent
-import android.content.SharedPreferences
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.animation.core.*
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -29,16 +26,17 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import com.elmendezz.qsre.ui.components.SingleCircleBackground
 import com.elmendezz.qsre.ui.theme.QuickSwitchRevivedTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -68,7 +66,33 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            QuickSwitchRevivedTheme {
+            val context = LocalContext.current
+            val prefs = remember { context.getSharedPreferences("qsre_prefs", Context.MODE_PRIVATE) }
+            
+            var themeMode by remember { mutableStateOf(prefs.getString("theme_mode", "system") ?: "system") }
+            var appColor by remember { mutableIntStateOf(prefs.getInt("app_color", -1)) }
+
+            // Re-check preferences when returning to the activity
+            LaunchedEffect(Unit) {
+                // Simple way to refresh when activity is created/re-created
+            }
+
+            QuickSwitchRevivedTheme(themeMode = themeMode, appColor = appColor) {
+                MainScreen()
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Force recomposition to apply settings changed in SettingsActivity
+        setContent {
+            val context = LocalContext.current
+            val prefs = remember { context.getSharedPreferences("qsre_prefs", Context.MODE_PRIVATE) }
+            val themeMode = prefs.getString("theme_mode", "system") ?: "system"
+            val appColor = prefs.getInt("app_color", -1)
+            
+            QuickSwitchRevivedTheme(themeMode = themeMode, appColor = appColor) {
                 MainScreen()
             }
         }
@@ -81,7 +105,6 @@ fun MainScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     
-    // SharedPreferences persistentes
     val prefs = remember { context.getSharedPreferences("qsre_prefs", Context.MODE_PRIVATE) }
     
     var quickswitchPath by remember { 
@@ -90,6 +113,7 @@ fun MainScreen() {
     var autoReboot by remember { 
         mutableStateOf(prefs.getBoolean("auto_reboot", false)) 
     }
+    val infiniteIcon = prefs.getBoolean("infinite_icon", false)
     
     var moduleInfo by remember { 
         mutableStateOf(ModuleInfo(name = "QuickSwitch", version = "...", author = "...")) 
@@ -116,7 +140,6 @@ fun MainScreen() {
             val moduleDir = quickswitchPath.substringBeforeLast("/")
             val modulePropPath = "$moduleDir/module.prop"
             
-            // 1. CARGA RÁPIDA: Info del módulo primero
             val propRes = ShellHelper.runAsRoot("cat $modulePropPath")
             val props = if (propRes.exitCode == 0) {
                 propRes.stdout.lines().associate { 
@@ -133,7 +156,6 @@ fun MainScreen() {
                 )
             }
             
-            // 2. Obtener el proveedor activo
             val activeResult = ShellHelper.runAsRoot("grep '^description=' $modulePropPath")
             val description = activeResult.stdout
             val activePkg = if (description.contains("[ Quickstep :")) {
@@ -146,7 +168,6 @@ fun MainScreen() {
                 }
             } else ""
 
-            // 3. CARGA DE APPS: Listado de launchers
             val listCommand = "pm list packages -e --user 0 | cut -d: -f2"
             val listResult = ShellHelper.runAsRoot(listCommand)
             val pkgNames = listResult.stdout.lines().map { it.trim() }.filter { it.isNotEmpty() }
@@ -251,6 +272,13 @@ fun MainScreen() {
                                 }
                             )
                             DropdownMenuItem(
+                                text = { Text(stringResource(R.string.menu_settings)) },
+                                onClick = { 
+                                    context.startActivity(Intent(context, SettingsActivity::class.java))
+                                    showMenu = false 
+                                }
+                            )
+                            DropdownMenuItem(
                                 text = { Text(stringResource(R.string.menu_view_logs)) },
                                 onClick = { showLogsDialog = true; showMenu = false }
                             )
@@ -301,7 +329,7 @@ fun MainScreen() {
 
                 LazyColumn(modifier = Modifier.fillMaxSize()) {
                     item {
-                        ModuleInfoCard(moduleInfo)
+                        ModuleInfoCard(moduleInfo, infiniteIcon)
                     }
 
                     if (inUse.isNotEmpty()) {
@@ -387,48 +415,7 @@ fun MainScreen() {
 }
 
 @Composable
-fun SingleCircleBackground() {
-    val infiniteTransition = rememberInfiniteTransition(label = "background")
-    
-    val xOffset by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(10000, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "xOffset"
-    )
-    
-    val yOffset by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(15000, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "yOffset"
-    )
-
-    val color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-    
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        val width = size.width
-        val height = size.height
-        
-        drawCircle(
-            color = color,
-            radius = width * 0.4f,
-            center = Offset(
-                x = width * (0.2f + 0.6f * xOffset),
-                y = height * (0.2f + 0.6f * yOffset)
-            )
-        )
-    }
-}
-
-@Composable
-fun ModuleInfoCard(info: ModuleInfo) {
+fun ModuleInfoCard(info: ModuleInfo, useInfiniteIcon: Boolean) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -437,7 +424,11 @@ fun ModuleInfoCard(info: ModuleInfo) {
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                if (useInfiniteIcon) {
+                    Icon(Icons.Default.Refresh, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                } else {
+                    Icon(painter = painterResource(R.drawable.ic_view_carousel), contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
+                }
                 Spacer(Modifier.width(8.dp))
                 Text(text = info.name.ifEmpty { stringResource(R.string.unknown) }, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             }

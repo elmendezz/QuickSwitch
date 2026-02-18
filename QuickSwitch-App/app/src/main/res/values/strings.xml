@@ -8,6 +8,7 @@
     <string name="menu_set_default">Set Default Launcher</string>
     <string name="menu_reboot_now">Reboot Now</string>
     <string name="menu_about">About</string>
+    <string name="menu_settings">Ajustes varios</string>
 
     <string name="section_in_use">Provider In Use</string>
     <string name="section_available">Available Providers</string>
@@ -26,6 +27,14 @@
     <string name="dialog_reboot_later">Later</string>
     <string name="dialog_path_title">Path</string>
     <string name="dialog_save">Save</string>
+
+    <string name="dialog_settings_title">Ajustes</string>
+    <string name="setting_theme">Tema</string>
+    <string name="setting_color">Color de la app</string>
+    <string name="setting_icon_infinite">Icono QuickSwitch infinito</string>
+    <string name="theme_system">Sistema</string>
+    <string name="theme_light">Claro</string>
+    <string name="theme_dark">Oscuro</string>
 
     <string name="unknown">Unknown</string>
     <string name="unknown_desc">N/A</string>

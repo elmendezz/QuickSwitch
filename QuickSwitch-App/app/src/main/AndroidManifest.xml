@@ -38,6 +38,11 @@
             android:exported="false"
             android:label="@string/menu_about"
             android:theme="@style/Theme.QuickSwitchRevived" />
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:label="@string/menu_settings"
+            android:theme="@style/Theme.QuickSwitchRevived" />
     </application>
 
 </manifest>
