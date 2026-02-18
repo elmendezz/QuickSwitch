@@ -4,4 +4,4 @@ version=v5
 versionCode=5
 author=The Lawnchair team & elmendezz
 description=[ Quickstep : Default ] Quickstep enabler for supported launchers
-updateJson=https://raw.githubusercontent.com/elmendezz/QuickSwitch/refs/heads/anyfix/master/wiwebui/update.json
+updateJson=https://raw.githubusercontent.com/elmendezz/QuickSwitch/refs/heads/anyfix/master/update.json
