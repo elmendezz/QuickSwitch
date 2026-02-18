@@ -5,6 +5,7 @@
 - You can see the logs!
 - lightweight app
 
+## The app is directly in the zip file. I've also included the apk separately in case you only want to install the app and not remove your module.
 # QuickSwitch fork  
 
 This is a fork of QuickSwitch.  
