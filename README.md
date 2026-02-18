@@ -54,7 +54,7 @@ or
 ## Support:
 If you encounter any problems, you may find some hints in the [GitHub Issues](https://github.com/elmendezz/QuickSwitch/issues) or [Telegram Group](https://t.me/QuickstepSwitcherSupport).  
 
-# Acknowledgments
+# Thanks!
 A huge thank you to [Skittles9823](https://github.com/Skittles9823) and the original team for creating QuickSwitch, and to [j7b3y](https://github.com/j7b3y) for its [fork of QuickSwitch](https://github.com/j7b3y/QuickSwitch). We love you!
 
 * **Original Developer:** [Skittles9823](https://github.com/Skittles9823)
