@@ -131,7 +131,7 @@ if [ -z "$NOAPK" ]; then
 fi
 
 ############################################
-# FORCE RETAIN LAUNCHER PROVIDER
+# FORCE RETAIN LAUNCHER PROVIDER (NO CLEAN)
 ############################################
 
 rm -rf /data/adb/modules/quickstepswitcher
@@ -148,20 +148,7 @@ if [ -d "$MODULEDIR" ]; then
     cp -rf "$MODULEDIR/system/product/overlay/"* "$CURRENT_OVERLAY_BACKUP/" 2>/dev/null
   fi
 
-  if [ "$MODVER" -ge 3300 ]; then
-    ui_print "- Module updating - retaining current provider"
-    for i in $(find $MODULEDIR/system/* -type d -maxdepth 0); do
-      cp -rf "$i" $MODPATH/system/
-    done
-  else
-    ui_print "- Major upgrade detected!"
-    ui_print "- Cleaning old files..."
-    for i in $(find $MODULEDIR/* -maxdepth 0 | sed "/^module.prop/ d"); do
-      rm -rf "$i"
-    done
-  fi
-
-  # Restore launcher overlay
+  # Restore launcher overlay directly (no deletion logic)
   if [ -d "$CURRENT_OVERLAY_BACKUP" ]; then
     ui_print "- Restoring previous launcher provider..."
     mkdir -p $MODPATH/system/product/overlay
