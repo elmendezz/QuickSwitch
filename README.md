@@ -57,5 +57,5 @@ If you encounter any problems, you may find some hints in the [GitHub Issues](ht
 # Acknowledgments
 A huge thank you to [Skittles9823](https://github.com/Skittles9823) and the original team for creating QuickSwitch, and to [j7b3y](https://github.com/j7b3y) for its [fork of QuickSwitch](https://github.com/j7b3y/QuickSwitch). We love you!
 
-* **Original Developers:** [Skittles9823](https://github.com/Skittles9823)
-* **Maintainer:** [j7b3y](https://github.com/j7b3y)
+* **Original Developer:** [Skittles9823](https://github.com/Skittles9823)
+* **Fork:** [j7b3y](https://github.com/j7b3y)
