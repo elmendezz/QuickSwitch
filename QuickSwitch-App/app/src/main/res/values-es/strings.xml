@@ -7,6 +7,7 @@
     <string name="menu_change_path">Cambiar Ruta De Ejecución</string>
     <string name="menu_set_default">Establecer Launcher Predeterminado</string>
     <string name="menu_reboot_now">Reiniciar ahora</string>
+    <string name="menu_about">Acerca De</string>
 
     <string name="section_in_use">Proveedor En Uso</string>
     <string name="section_available">Proveedores Disponibles</string>
@@ -28,4 +29,8 @@
 
     <string name="unknown">Desconocido</string>
     <string name="unknown_desc">N/A</string>
+
+    <string name="about_name">elmendezz</string>
+    <string name="about_description">QuickSwitch Revived es una herramienta que te permite cambiar el proveedor de Recientes de tu sistema a cualquier lanzador compatible, habilitando la navegación por gestos en lanzadores de terceros.</string>
+    <string name="about_version">Versión: %s</string>
 </resources>

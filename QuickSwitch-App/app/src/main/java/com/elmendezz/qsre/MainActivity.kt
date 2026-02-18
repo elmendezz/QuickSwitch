@@ -270,6 +270,13 @@ fun MainScreen() {
                                     showMenu = false 
                                 }
                             )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.menu_about)) },
+                                onClick = { 
+                                    context.startActivity(Intent(context, AboutMeActivity::class.java))
+                                    showMenu = false 
+                                }
+                            )
                         }
                     }
                 }
