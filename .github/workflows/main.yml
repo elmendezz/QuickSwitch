@@ -1,11 +1,16 @@
+name: Build and Release Android & Magisk
+
 on:
   push:
     branches:
       - 'anyfix/master'
+    # Importante: Ignoramos cambios en estos archivos para ayudar a prevenir loops,
+    # aunque [skip ci] es la verdadera protección.
     paths-ignore:
       - 'README.md'
       - 'changelog.md'
       - 'update.json'
+      - 'module.prop'
 
 jobs:
   build-and-release:
@@ -17,32 +22,61 @@ jobs:
       - name: Checkout del código
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0 # Necesario para leer el historial de git (logs y diffs)
           ref: 'anyfix/master'
 
-      # --- 1. CONFIGURACIÓN DE VERSIÓN ---
+      # --- 1. LÓGICA DE VERSIONADO (Basado en module.prop) ---
       - name: Calcular Versión y Actualizar Props
         id: versioning
         run: |
-          # Leer versionCode actual del modulo Magisk
+          # 1. Leer versionCode actual
           OLD_CODE=$(grep 'versionCode=' module.prop | cut -d= -f2)
           if [ -z "$OLD_CODE" ]; then OLD_CODE=1; fi
           
-          # Calcular nuevos valores
+          # 2. Calcular nuevos valores
           NEW_CODE=$((OLD_CODE + 1))
           NEW_VER="v${NEW_CODE}.0"
           
-          echo "Nueva versión detectada: $NEW_VER ($NEW_CODE)"
+          echo "Nueva versión: $NEW_VER ($NEW_CODE)"
           
-          # Editar module.prop
+          # 3. Actualizar module.prop
           sed -i "s/versionCode=.*/versionCode=$NEW_CODE/" module.prop
           sed -i "s/version=.*/version=$NEW_VER/" module.prop
           
-          # Exportar variables para usarlas en los siguientes pasos
+          # 4. Exportar variables
           echo "new_ver=$NEW_VER" >> $GITHUB_OUTPUT
           echo "new_code=$NEW_CODE" >> $GITHUB_OUTPUT
 
-      # --- 2. ACTUALIZACIÓN DEL JSON ---
+      # --- 2. ACTUALIZACIÓN DE CHANGELOG ---
+      - name: Generar Changelog
+        run: |
+          NEW_VER="${{ steps.versioning.outputs.new_ver }}"
+          
+          # Obtener último mensaje de commit (excluyendo el propio del bot si hubiera)
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          
+          # Obtener lista de archivos cambiados en el último commit
+          CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r HEAD)
+          
+          # Crear contenido temporal
+          echo "## $NEW_VER" > temp_changelog.md
+          echo "**Cambios:**" >> temp_changelog.md
+          echo "$COMMIT_MSG" >> temp_changelog.md
+          echo "" >> temp_changelog.md
+          echo "**Archivos modificados:**" >> temp_changelog.md
+          echo "\`\`\`" >> temp_changelog.md
+          echo "$CHANGED_FILES" >> temp_changelog.md
+          echo "\`\`\`" >> temp_changelog.md
+          echo "" >> temp_changelog.md
+          echo "---" >> temp_changelog.md
+          
+          # Prepend: Poner lo nuevo al principio + el contenido viejo debajo
+          if [ -f changelog.md ]; then
+            cat changelog.md >> temp_changelog.md
+          fi
+          mv temp_changelog.md changelog.md
+
+      # --- 3. ACTUALIZACIÓN DEL JSON (MAGISK) ---
       - name: Actualizar update.json
         run: |
           NEW_VER="${{ steps.versioning.outputs.new_ver }}"
@@ -51,79 +85,78 @@ jobs:
           
           if [ ! -f update.json ]; then echo "{}" > update.json; fi
 
-          # Actualizamos el JSON (Mantenemos tu estructura)
+          # Usamos jq para actualizar el JSON de forma segura
           jq --arg ver "$NEW_VER" \
              --arg code "$NEW_CODE" \
              --arg url "$ZIP_URL" \
              '.version = $ver | .versionCode = ($code | tonumber) | .zipUrl = $url' \
              update.json > temp.json && mv temp.json update.json
 
-      # --- 3. BLOQUE ANDROID (NUEVO) ---
+      # --- 4. CONFIGURACIÓN Y BUILD ANDROID ---
       - name: Configurar Java 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Actualizar Versión en App Android
+      - name: Actualizar Versión en App Android (Kotlin DSL)
         run: |
-          # Definir variables
           VER_CODE="${{ steps.versioning.outputs.new_code }}"
           VER_NAME="${{ steps.versioning.outputs.new_ver }}"
           
-          echo "Aplicando v$VER_CODE a la app Android..."
+          echo "Aplicando v$VER_CODE ($VER_NAME) a build.gradle.kts..."
           
           cd QuickSwitch-App
           
-          # Intentamos actualizar build.gradle (Estándar moderno)
-          # Busca 'versionCode 5' y lo cambia, busca 'versionName "1.0"' y lo cambia
-          find . -name "build.gradle" -exec sed -i "s/versionCode .*/versionCode $VER_CODE/" {} +
-          find . -name "build.gradle" -exec sed -i "s/versionName .*/versionName \"$VER_NAME\"/" {} +
+          # AQUÍ ESTÁ LA MAGIA PARA KOTLIN DSL (.kts)
+          # Busca 'versionCode = 1' y lo cambia. \s* permite cualquier cantidad de espacios.
+          find . -name "build.gradle.kts" -exec sed -i "s/versionCode\s*=\s*[0-9]\+/versionCode = $VER_CODE/" {} +
           
-          # Intentamos actualizar AndroidManifest.xml (Método antiguo, por si acaso)
-          find . -name "AndroidManifest.xml" -exec sed -i "s/android:versionCode=\".*\"/android:versionCode=\"$VER_CODE\"/" {} +
-          find . -name "AndroidManifest.xml" -exec sed -i "s/android:versionName=\".*\"/android:versionName=\"$VER_NAME\"/" {} +
+          # Busca 'versionName = "1.0"' y lo cambia.
+          find . -name "build.gradle.kts" -exec sed -i "s/versionName\s*=\s*\".*\"/versionName = \"$VER_NAME\"/" {} +
 
       - name: Compilar APK (Debug)
         run: |
           cd QuickSwitch-App
           chmod +x gradlew
-          # Usamos assembleDebug para no necesitar firmar con keystore por ahora
           ./gradlew assembleDebug --no-daemon
 
       - name: Renombrar y Mover APK
         run: |
-          # Buscamos el APK generado y lo movemos a la raíz con nombre bonito
           find QuickSwitch-App -name "*-debug.apk" -exec mv {} QuickSwitch-App-${{ steps.versioning.outputs.new_ver }}.apk \;
 
-      # --- 4. EMPAQUETADO Y SUBIDA ---
+      # --- 5. EMPAQUETADO ZIP (MÓDULO) ---
       - name: Crear ZIP del Módulo
         run: |
-          # Excluimos la carpeta de la App del ZIP del módulo para que no pese tanto
+          # Importante: Excluimos la carpeta de la app y archivos de git/github
           zip -r "QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip" . \
             -x "*.git*" ".github/*" "*.md" "*.yml" "*.yaml" "update.json" "QuickSwitch-App/*" "*.apk"
 
-      - name: Guardar cambios (Commit & Push)
+      # --- 6. GUARDAR CAMBIOS (COMMIT SIN LOOP) ---
+      - name: Guardar cambios en el Repo
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           
-          # Añadimos los cambios del module.prop y json
-          git add module.prop update.json
+          # Añadimos TODOS los archivos que modificamos
+          git add module.prop update.json changelog.md
           
-          # OJO: Si quieres que se guarde el cambio de versión de la app en el repo, descomenta esto:
-          # git add QuickSwitch-App/**/build.gradle
+          # Añadimos el build.gradle.kts modificado
+          git add QuickSwitch-App/**/build.gradle.kts
           
+          # COMMIT CON [skip ci]
+          # Esto evita que se inicie otro workflow infinito
           git commit -m "Auto-bump to ${{ steps.versioning.outputs.new_ver }} [skip ci]" || echo "No changes to commit"
+          
           git push origin HEAD:anyfix/master
 
+      # --- 7. PUBLICAR RELEASE ---
       - name: Publicar Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.versioning.outputs.new_ver }}
           name: QuickSwitch ${{ steps.versioning.outputs.new_ver }}
-          body_path: changelog.md
-          # Aquí subimos AMBOS archivos: el ZIP del módulo y el APK de la app
+          body_path: changelog.md # Usamos el changelog actualizado como cuerpo
           files: |
             QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip
             QuickSwitch-App-${{ steps.versioning.outputs.new_ver }}.apk
