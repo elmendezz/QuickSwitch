@@ -139,3 +139,4 @@ set_perm $MODPATH/busybox 2000 2000 0755
 set_perm $MODPATH/quickswitch 2000 2000 0777
 set_perm $MODPATH/zipsigner 0 0 0755
 set_perm $MODPATH/zipsigner-3.0-dexed.jar 0 0 0644
+#Test
