@@ -1,0 +1,31 @@
+<resources>
+    <string name="app_name">QuickSwitch Revived</string>
+    <string name="menu_refresh">Refresh</string>
+    <string name="menu_auto_reboot">Auto reboot</string>
+    <string name="menu_view_logs">View Logs</string>
+    <string name="menu_reset">Reset</string>
+    <string name="menu_change_path">Change Execution Path</string>
+    <string name="menu_set_default">Set Default Launcher</string>
+    <string name="menu_reboot_now">Reboot Now</string>
+
+    <string name="section_in_use">Provider In Use</string>
+    <string name="section_available">Available Providers</string>
+
+    <string name="module_version">Version: %s</string>
+    <string name="module_author">Author: %s</string>
+    <string name="launcher_active_tag">Active</string>
+
+    <string name="dialog_logs_title">Logs</string>
+    <string name="dialog_close">Close</string>
+    <string name="dialog_result_title">Result</string>
+    <string name="dialog_continue">Continue</string>
+    <string name="dialog_reboot_title">Reboot</string>
+    <string name="dialog_reboot_msg">Do you want to reboot now?</string>
+    <string name="dialog_reboot_confirm">Reboot</string>
+    <string name="dialog_reboot_later">Later</string>
+    <string name="dialog_path_title">Path</string>
+    <string name="dialog_save">Save</string>
+
+    <string name="unknown">Unknown</string>
+    <string name="unknown_desc">N/A</string>
+</resources>

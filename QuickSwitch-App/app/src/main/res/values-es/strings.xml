@@ -1,0 +1,31 @@
+<resources>
+    <string name="app_name">QuickSwitch Revived</string>
+    <string name="menu_refresh">Refrescar</string>
+    <string name="menu_auto_reboot">Reinicio automático</string>
+    <string name="menu_view_logs">Ver Logs</string>
+    <string name="menu_reset">Restablecer</string>
+    <string name="menu_change_path">Cambiar Ruta De Ejecución</string>
+    <string name="menu_set_default">Establecer Launcher Predeterminado</string>
+    <string name="menu_reboot_now">Reiniciar ahora</string>
+
+    <string name="section_in_use">Proveedor En Uso</string>
+    <string name="section_available">Proveedores Disponibles</string>
+
+    <string name="module_version">Versión: %s</string>
+    <string name="module_author">Autor: %s</string>
+    <string name="launcher_active_tag">Activo</string>
+
+    <string name="dialog_logs_title">Logs</string>
+    <string name="dialog_close">Cerrar</string>
+    <string name="dialog_result_title">Resultado</string>
+    <string name="dialog_continue">Continuar</string>
+    <string name="dialog_reboot_title">Reiniciar</string>
+    <string name="dialog_reboot_msg">¿Deseas reiniciar ahora?</string>
+    <string name="dialog_reboot_confirm">Reiniciar</string>
+    <string name="dialog_reboot_later">Más tarde</string>
+    <string name="dialog_path_title">Ruta</string>
+    <string name="dialog_save">Guardar</string>
+
+    <string name="unknown">Desconocido</string>
+    <string name="unknown_desc">N/A</string>
+</resources>
