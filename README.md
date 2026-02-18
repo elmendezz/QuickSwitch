@@ -6,7 +6,8 @@
 - You can see the logs!
 - lightweight app
 
-##### The app is directly in the zip file. I've also included the apk separately in case you only want to install the app and not remove your module.
+##### The app is included within the ZIP file. I have also provided the APK separately, in case you only want to install the app without removing your current module.
+
 # This module will only support the WebUI version and My App. If Autor (of the original fork) updates the module, I will bring you an update as soon as possible.
 # QuickSwitch fork  
 
