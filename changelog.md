@@ -1,3 +1,6 @@
+## v19.0
+**Changes:** Delete QuickSwitch-App/app/release/app-release.apk
+---
 ## v18.0
 **Changes:** update customize.sh
 ---
