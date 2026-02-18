@@ -1,4 +1,3 @@
-SKIPUNZIP=1
 # @Skittles9823 made this ascii and is way to proud of it
 ui_print " "
 ui_print "       _____       "
@@ -18,13 +17,13 @@ ui_print " "
 VEN=/system/vendor
 [ -L /system/vendor ] && VEN=/vendor
 if [ -f $VEN/build.prop ]; then BUILDS="/system/build.prop $VEN/build.prop"; else BUILDS="/system/build.prop"; fi
-# Thanks Narsil/Sauron for the huge props list for various android systems
-# Far easier to look there then ask users for their build.props
+
 MIUI=$(grep "ro.miui.ui.version.*" $BUILDS)
 if [ $MIUI ] && [ $API -lt "30" ]; then
   ui_print " MIUI 12 or lower is not supported"
   abort " Aborting..."
 fi
+
 ui_print "- Extracting module files"
 
 unzip -o "$ZIPFILE" 'overlays/*' 'system/*' 'common/*' 'module.prop' 'system.prop' 'sepolicy.rule' 'zipsigner*' 'uninstall.sh' 'quickswitch' 'service.sh' 'webroot/*' -d $MODPATH >&2
@@ -37,14 +36,14 @@ rm -rf /data/adb/service.d/quickswitch.sh
 rm -rf /data/adb/service.d/quickswitch-service.sh
 rm -rf /data/adb/post-fs-data.d/quickswitch-post.sh
 
-# Custom install stuffs
 rm -rf /data/resource-cache/overlays.list
 find /data/resource-cache/ -name "*QuickstepSwitcherOverlay*" -exec rm -rf {} \;
 find /data/resource-cache/ -name "*QuickSwitchOverlay*" -exec rm -rf {} \;
+
 MODULEDIR="/data/adb/modules/$MODID"
 MODVER=$(grep_prop versionCode $MODULEDIR/module.prop)
 
-# Check for root solution
+# Root solution checks
 if [ -z "$KSU" ]; then
   sed -i "/KSU=true*/d" $MODPATH/quickswitch
 fi
@@ -64,17 +63,64 @@ else
 fi
 
 
+########################################
+# APK INSTALL WITH AUTO RETRY SYSTEM  #
+########################################
+
 if [ -z "$NOAPK" ]; then
+
+  ui_print "- Preparing QuickSwitch.apk"
   unzip -o "$ZIPFILE" 'QuickSwitch.apk' -d /data/local/tmp >&2
-  ui_print "- installing QuickSwitch.apk"
+
+  ui_print "- Installing QuickSwitch.apk (Attempt 1)"
   pm install -r "/data/local/tmp/QuickSwitch.apk"
-  rm -rf /data/local/tmp/QuickSwitch.apk
+  INSTALL_RESULT=$?
+
+  if [ $INSTALL_RESULT -ne 0 ]; then
+
+    ui_print " "
+    ui_print " ! First install failed"
+    ui_print " ! Cleaning old installation..."
+    ui_print " "
+
+    # Remove installed package if exists
+    pm uninstall xyz.paphonb.quickswitch >/dev/null 2>&1
+
+    # Remove temp apk
+    rm -rf /data/local/tmp/QuickSwitch.apk
+
+    # Extract again clean
+    unzip -o "$ZIPFILE" 'QuickSwitch.apk' -d /data/local/tmp >&2
+
+    ui_print "- Reinstalling QuickSwitch.apk (Attempt 2)"
+    pm install -r "/data/local/tmp/QuickSwitch.apk"
+    INSTALL_RESULT=$?
+
+    if [ $INSTALL_RESULT -ne 0 ]; then
+      ui_print " "
+      ui_print " !! Second install failed"
+      ui_print " !! Switching to module-only mode (SKIPUNZIP=1)"
+      ui_print " "
+
+      rm -rf /data/local/tmp/QuickSwitch.apk
+      SKIPUNZIP=1
+      NOAPK=true
+    else
+      ui_print "- APK installed successfully on retry"
+      rm -rf /data/local/tmp/QuickSwitch.apk
+    fi
+
+  else
+    ui_print "- APK installed successfully"
+    rm -rf /data/local/tmp/QuickSwitch.apk
+  fi
 fi
 
-rm -rf /data/adb/modules/quickstepswitcher # yeet old module dir
+
+rm -rf /data/adb/modules/quickstepswitcher
 
 if [ -d $MODULEDIR ]; then
-  if [ $MODVER -ge 3300 ]; then # Been a minute since we've made people clean the install dir, prolly should do it now
+  if [ $MODVER -ge 3300 ]; then
     ui_print "- Module updating - retaining current provider"
     for i in $(find $MODULEDIR/system/* -type d -maxdepth 0); do
       cp -rf "$i" $MODPATH/system/
@@ -86,8 +132,6 @@ if [ -d $MODULEDIR ]; then
     ui_print "- Major upgrade! clearing out all old files and directories."
   fi
 fi
-
-# Nobody reads it anyway Sadge
 
 set_perm_recursive $MODPATH 0 0 0755 0644
 set_perm $MODPATH/aapt2 2000 2000 0755
