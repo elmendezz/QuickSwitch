@@ -129,14 +129,14 @@ jobs:
           sed -i "s/versionCode=.*/versionCode=$NEW_CODE/" module.prop
           sed -i "s/version=.*/version=$NEW_VER/" module.prop
 
-      # --- 7. METADATA & ZIP (MEJORADO CON DIFFS Y FALLBACK) ---
+            # --- 7. METADATA & ZIP (CORREGIDO) ---
       - name: 📄 Generate Metadata & Zip
         if: steps.check_changes.outputs.should_run == 'true'
         run: |
           NEW_VER="${{ steps.versioning.outputs.new_ver }}"
           NEW_CODE="${{ steps.versioning.outputs.new_code }}"
           
-          # --- GENERACIÓN DE CHANGELOG DETALLADO ---
+          # --- GENERACIÓN DE CHANGELOG ---
           AUTHOR=$(git log -1 --pretty=format:'%an')
           HASH=$(git rev-parse --short HEAD)
           COMMIT_MSG=$(git log -1 --pretty=%B)
@@ -166,7 +166,7 @@ jobs:
           # Limpieza
           rm -f QuickSwitch-Signed.apk app-release-*.apk *.idsig
           
-          # --- ZIP CON FALLBACK ---
+          # --- ZIP CON FALLBACK ROBUSTO ---
           TARGET_ZIP="QuickSwitch-${NEW_VER}.zip"
           echo "Comprimiendo..."
           
@@ -174,19 +174,34 @@ jobs:
           if zip -r "$TARGET_ZIP" . -x "*.git*" ".github/*" "*.md" "*.yml" "update.json" "current.txt" "QuickSwitch-App/*" -x "QuickSwitch-v*.apk" "new_entry.md" "temp.json" "*.jks"; then
             echo "✅ Zip creado exitosamente con herramienta nativa."
           else
-            echo "⚠️ 'zip' falló. Intentando alternativa con Python..."
-            # Intento 2: Python Fallback
-            python3 -c "
-import zipfile, os, fnmatch
-exclude_patterns = ['*.git*', '.github/*', '*.md', '*.yml', 'update.json', 'current.txt', 'QuickSwitch-App/*', 'QuickSwitch-v*.apk', 'new_entry.md', 'temp.json', '*.jks']
-with zipfile.ZipFile('$TARGET_ZIP', 'w', zipfile.ZIP_DEFLATED) as z:
-    for root, dirs, files in os.walk('.'):
-        for file in files:
-            path = os.path.join(root, file)
-            # Lógica simple de exclusión
-            if not any(fnmatch.fnmatch(path, p) for p in exclude_patterns) and not path.startswith('./.git'):
-                 z.write(path)
-            "
+            echo "⚠️ 'zip' falló. Usando Python Fallback..."
+            
+            # Crear script python temporal (Heredoc) para evitar errores de sintaxis YAML
+            cat <<EOF > zipper.py
+          import zipfile, os, fnmatch
+          
+          target = "$TARGET_ZIP"
+          # Patrones a excluir (formato glob)
+          exclude = ['*.git*', '.github/*', '*.md', '*.yml', 'update.json', 'current.txt', 'QuickSwitch-App/*', 'QuickSwitch-v*.apk', 'new_entry.md', 'temp.json', '*.jks', 'zipper.py']
+          
+          with zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED) as z:
+              for root, dirs, files in os.walk('.'):
+                  for file in files:
+                      path = os.path.join(root, file)
+                      rel_path = os.path.relpath(path, '.')
+                      
+                      # Check exclusion
+                      if rel_path == target: continue
+                      if any(fnmatch.fnmatch(rel_path, p) for p in exclude): continue
+                      if rel_path.startswith('.git'): continue
+                      
+                      z.write(path, arcname=rel_path)
+          EOF
+            
+            # Ejecutar y borrar script
+            python3 zipper.py
+            rm zipper.py
+            echo "✅ Zip creado con Python."
           fi
 
       # --- 8. SUBIDA A GOFILE (NUEVO) ---
