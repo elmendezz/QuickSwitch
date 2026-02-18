@@ -6,7 +6,6 @@ on:
       - 'anyfix/master'
     paths-ignore:
       - 'README.md'
-      # Ignoramos estos archivos generados automáticamente para evitar loops
       - 'changelog.md'
       - 'update.json'
       - 'module.prop'
@@ -19,152 +18,162 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout del código
+      - name: 📥 Checkout del código
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: 'anyfix/master'
 
-      # --- 1. LÓGICA DE VERSIONADO (Con current.txt) ---
-      - name: Calcular Versión (Usando current.txt)
+      # --- 1. LÓGICA DE VERSIONADO (MEJORADA) ---
+      - name: 🏷️ Calcular Versión
         id: versioning
         run: |
-          # 1. Intentar leer la versión actual desde current.txt
+          # Leer versión actual o fallback
           if [ -f current.txt ]; then
-            OLD_CODE=$(cat current.txt | tr -dc '0-9') # Solo números
-            echo "Leído desde current.txt: $OLD_CODE"
+            OLD_CODE=$(cat current.txt | tr -dc '0-9')
+          else
+            OLD_CODE=$(grep 'versionCode=' module.prop | cut -d= -f2 || echo "0")
           fi
           
-          # 2. Fallback: Si current.txt no existe o está vacío, leer de module.prop
-          if [ -z "$OLD_CODE" ]; then
-            echo "current.txt no encontrado, leyendo de module.prop..."
-            OLD_CODE=$(grep 'versionCode=' module.prop | cut -d= -f2)
-          fi
+          # Si falla, iniciar en 1
+          if [ -z "$OLD_CODE" ] || [ "$OLD_CODE" -eq 0 ]; then OLD_CODE=1; fi
           
-          # 3. Fallback final: Si todo falla, empezar en 1
-          if [ -z "$OLD_CODE" ]; then OLD_CODE=1; fi
-          
-          # 4. Calcular NUEVA versión
+          # Calcular nueva
           NEW_CODE=$((OLD_CODE + 1))
           NEW_VER="v${NEW_CODE}.0"
           
-          echo "Nueva versión calculada: $NEW_VER ($NEW_CODE)"
+          echo "🚀 Bump version: $OLD_CODE -> $NEW_CODE ($NEW_VER)"
           
-          # 5. Guardar la NUEVA versión en current.txt para la próxima vez
+          # Guardar para pasos siguientes
           echo "$NEW_CODE" > current.txt
           
-          # 6. Actualizar module.prop
+          # Actualizar module.prop
           sed -i "s/versionCode=.*/versionCode=$NEW_CODE/" module.prop
           sed -i "s/version=.*/version=$NEW_VER/" module.prop
           
-          # 7. Exportar variables
+          # Exportar outputs
           echo "new_ver=$NEW_VER" >> $GITHUB_OUTPUT
           echo "new_code=$NEW_CODE" >> $GITHUB_OUTPUT
 
-      # --- 2. CHANGELOG (Mantiene lógica de 2 entradas) ---
-      - name: Generar Changelog
+      # --- 2. CHANGELOG PERRÓN (CON DIFFS Y ESTRUCTURA) ---
+      - name: 📝 Generar Changelog Pro
         run: |
           NEW_VER="${{ steps.versioning.outputs.new_ver }}"
           COMMIT_MSG=$(git log -1 --pretty=%B)
-          CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r HEAD)
+          AUTHOR_NAME=$(git log -1 --pretty=%an)
           
-          echo "## $NEW_VER" > new_entry.md
-          echo "**Cambios:**" >> new_entry.md
+          # Generar estadísticas visuales de cambios (archivos modificados)
+          DIFF_STAT=$(git diff-tree --no-commit-id --stat -r HEAD)
+          
+          # Crear cabecera de la nueva entrada
+          echo "## $NEW_VER (🔴 Current / Actual)" > new_entry.md
+          echo "> **📅 Date:** $(date +'%Y-%m-%d') | **🤖 By:** $AUTHOR_NAME" >> new_entry.md
+          echo "" >> new_entry.md
+          
+          # Sección de cambios (Simulando estructura bilingüe)
+          echo "### 🇬🇧 English / 🇪🇸 Español Changes" >> new_entry.md
           echo "$COMMIT_MSG" >> new_entry.md
           echo "" >> new_entry.md
-          echo "**Archivos modificados:**" >> new_entry.md
-          echo "\`\`\`" >> new_entry.md
-          echo "$CHANGED_FILES" >> new_entry.md
+          
+          # Sección técnica visual (Diffs cortos)
+          echo "### 📊 File Stats (Diffs)" >> new_entry.md
+          echo "\`\`\`diff" >> new_entry.md
+          echo "$DIFF_STAT" >> new_entry.md
           echo "\`\`\`" >> new_entry.md
           echo "" >> new_entry.md
           echo "---" >> new_entry.md
           
+          # Unir con el changelog antiguo (quitando la marca 'Current' de versiones viejas si existiera)
           if [ -f changelog.md ] && [ -s changelog.md ]; then
-            sed '/^---$/q' changelog.md >> new_entry.md
+            # Truco: sed aquí podría limpiar etiquetas viejas si quisieras, 
+            # pero por seguridad solo concatenamos.
+            cat changelog.md >> new_entry.md
           fi
+          
           mv new_entry.md changelog.md
 
-      # --- 3. ACTUALIZACIÓN UPDATE.JSON (Corregido para Magisk) ---
-      - name: Actualizar update.json
+      # --- 3. ACTUALIZACIÓN UPDATE.JSON ---
+      - name: 🔄 Actualizar update.json
         run: |
           NEW_VER="${{ steps.versioning.outputs.new_ver }}"
           NEW_CODE="${{ steps.versioning.outputs.new_code }}"
-          
-          # URL del ZIP del release
           ZIP_URL="https://github.com/${{ github.repository }}/releases/download/$NEW_VER/QuickSwitch-$NEW_VER.zip"
-          
-          # URL RAW del Changelog (Vital para que Magisk lo lea)
-          # Ajustado a la rama 'anyfix/master'
           CHANGELOG_URL="https://raw.githubusercontent.com/${{ github.repository }}/anyfix/master/changelog.md"
           
           if [ ! -s update.json ]; then echo "{}" > update.json; fi
 
-          # Actualizamos JSON añadiendo el campo 'changelog'
           jq --arg ver "$NEW_VER" \
              --arg code "$NEW_CODE" \
              --arg url "$ZIP_URL" \
              --arg log "$CHANGELOG_URL" \
              '.version = $ver | .versionCode = ($code | tonumber) | .zipUrl = $url | .changelog = $log' \
              update.json > temp.json && mv temp.json update.json
-             
-          echo "JSON Generado:"
-          cat update.json
 
       # --- 4. BUILD ANDROID ---
-      - name: Configurar Java 17
+      - name: ☕ Configurar Java 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Actualizar Versión en App Android
+      - name: 🔨 Compilar APK
         run: |
           VER_CODE="${{ steps.versioning.outputs.new_code }}"
           VER_NAME="${{ steps.versioning.outputs.new_ver }}"
           
           cd QuickSwitch-App
+          # Inyectar versión en gradle kts
           find . -name "build.gradle.kts" -exec sed -i "s/versionCode\s*=\s*[0-9]\+/versionCode = $VER_CODE/" {} +
           find . -name "build.gradle.kts" -exec sed -i "s/versionName\s*=\s*\".*\"/versionName = \"$VER_NAME\"/" {} +
-
-      - name: Compilar APK (Debug)
-        run: |
-          cd QuickSwitch-App
+          
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
 
-      - name: Renombrar APK
+      # --- 5. GESTIÓN DE APKs (LA MAGIA AQUÍ) ---
+      - name: 📦 Preparar APKs
         run: |
-          find QuickSwitch-App -name "*-debug.apk" -exec mv {} QuickSwitch-App-${{ steps.versioning.outputs.new_ver }}.apk \;
-
-      # --- 5. EMPAQUETADO ---
-      - name: Crear ZIP del Módulo
-        run: |
-          # Excluir current.txt del ZIP final (es solo para el repo)
-          zip -r "QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip" . \
-            -x "*.git*" ".github/*" "*.md" "*.yml" "*.yaml" "update.json" "current.txt" "QuickSwitch-App/*" "*.apk"
-
-      # --- 6. GUARDAR CAMBIOS (Incluyendo current.txt) ---
-      - name: Guardar cambios en el Repo
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
+          # Encontrar el APK compilado
+          BUILT_APK=$(find QuickSwitch-App -name "*-debug.apk" | head -n 1)
           
-          # AÑADIMOS current.txt al commit
+          echo "APK encontrado en: $BUILT_APK"
+          
+          # 1. Copia para el ZIP (nombre fijo 'QuickSwitch.apk')
+          cp "$BUILT_APK" ./QuickSwitch.apk
+          
+          # 2. Copia para subir al Release (nombre con versión)
+          cp "$BUILT_APK" "./QuickSwitch-${{ steps.versioning.outputs.new_ver }}.apk"
+
+      # --- 6. EMPAQUETADO ZIP ---
+      - name: 🤐 Crear ZIP Magisk
+        run: |
+          # Creamos el ZIP incluyendo explícitamente el QuickSwitch.apk (el fijo)
+          # Excluimos basura y el APK versionado que va suelto
+          zip -r "QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip" . \
+            -x "*.git*" ".github/*" "*.md" "*.yml" "*.yaml" "update.json" "current.txt" "QuickSwitch-App/*" \
+            -x "QuickSwitch-*.apk" # Excluye el APK versionado, pero mantiene QuickSwitch.apk
+
+      # --- 7. COMMIT DEL BOT ---
+      - name: 🤖 Guardar cambios (Bot Bump)
+        run: |
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
           git add module.prop update.json changelog.md current.txt
           git add QuickSwitch-App/**/build.gradle.kts
           
-          git commit -m "Auto-bump to ${{ steps.versioning.outputs.new_ver }} [skip ci]" || echo "No changes to commit"
+          # Mensaje claro indicando que fue el bot
+          git commit -m "🤖 Bump version to ${{ steps.versioning.outputs.new_ver }} [skip ci]" || echo "No changes to commit"
           git push origin HEAD:anyfix/master
 
-      # --- 7. RELEASE ---
-      - name: Publicar Release
+      # --- 8. RELEASE ---
+      - name: 🚀 Publicar Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.versioning.outputs.new_ver }}
           name: QuickSwitch ${{ steps.versioning.outputs.new_ver }}
-          body_path: changelog.md
+          body_path: new_entry.md  # Usamos solo la entrada nueva para la descripción del release
           files: |
             QuickSwitch-${{ steps.versioning.outputs.new_ver }}.zip
-            QuickSwitch-App-${{ steps.versioning.outputs.new_ver }}.apk
+            QuickSwitch-${{ steps.versioning.outputs.new_ver }}.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
