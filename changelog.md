@@ -1,3 +1,17 @@
+## 🚀 v21.0 (d9c89b7)
+**👤 Author:** elmendezz
+
+### 📝 Changes
+```text
+Add /Sources to .gitignore
+
+Add a /Sources entry to .gitignore to ignore the Sources directory. Also normalize the file ending (ensure newline at EOF) and preserve the existing 'Final' entry.
+```
+### 📊 Files Changed
+```diff
+ .gitignore | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+```
 ## 🚀 v20.0 (917cb51)
 **👤 Author:** elmendezz
 
