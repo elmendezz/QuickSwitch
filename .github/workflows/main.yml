@@ -79,7 +79,7 @@ jobs:
           
           # Intento 1: Build Release Optimizado
           echo "🚀 Intentando Build Release..."
-          if ! ./gradlew assembleRelease --no-daemon --parallel --build-cache -x lint -x test; then
+          if ! ./gradlew assembleRelease --no-daemon --parallel --build-cache --configuration-cache -x lint -x test; then
              echo "⚠️ Build Release falló. Intentando modo limpio (Fallback)..."
              ./gradlew clean assembleRelease --no-daemon -x lint -x test
           fi
