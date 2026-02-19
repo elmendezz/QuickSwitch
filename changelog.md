@@ -1,3 +1,19 @@
+## 🚀 v22.0 (207b388)
+**👤 Author:** elmendezz
+
+### 📝 Changes
+```text
+Merge branch 'anyfix/master' of https://github.com/elmendezz/QuickSwitch into anyfix/master
+```
+### 📊 Files Changed
+```diff
+ QuickSwitch-App/app/build.gradle.kts |  4 ++--
+ changelog.md                         | 14 ++++++++++++++
+ current.txt                          |  2 +-
+ module.prop                          |  4 ++--
+ update.json                          |  6 +++---
+ 5 files changed, 22 insertions(+), 8 deletions(-)
+```
 ## 🚀 v21.0 (d9c89b7)
 **👤 Author:** elmendezz
 
